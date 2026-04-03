@@ -11,6 +11,7 @@
 - **语音消息**：自动下载语音文件到本地，前端支持播放
 - **增量更新**：支持增量模式，只获取新消息
 - **前端浏览器**：内置 Vue 3 + FastAPI 聊天记录浏览界面，支持无限滚动、全文搜索、搜索跳转
+- **ChatLab 导出**：支持导出为 [ChatLab](https://github.com/hellodigua/ChatLab) 标准格式（JSON/JSONL），可用于 AI 聊天记录分析
 
 ## 安装
 
@@ -60,11 +61,22 @@ python3 -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 
 访问 `http://localhost:8000` 查看聊天记录。
 
-### 3. 导出为 JSONL
+### 3. 导出为 ChatLab 格式
+
+支持导出为 [ChatLab](https://github.com/hellodigua/ChatLab) 标准格式，可直接导入 ChatLab 进行 AI 分析。
 
 ```bash
-python3 extract.py --export --filter "会话名称" --output data/export.jsonl
+# 导出为 JSONL（默认）
+python3 export.py --filter "会话名称"
+
+# 导出为 JSON
+python3 export.py --filter "会话名称" --format json
+
+# 指定输出路径
+python3 export.py --filter "会话名称" --output data/export.jsonl
 ```
+
+导出内容包括：文本、表情、图片 URL、语音（base64 嵌入）、分享链接、引用/回复关系。
 
 ## 注意事项
 
