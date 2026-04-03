@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="">
+  <head>
+    <meta charset="UTF-8">
+    <link rel="icon" href="/favicon.ico">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>抖音聊天记录</title>
+    <script>
+      // 在 Vue 加载前应用主题，防止闪烁
+      (function() {
+        var t = localStorage.getItem('theme');
+        if (t && t !== 'dark') document.documentElement.setAttribute('data-theme', t);
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

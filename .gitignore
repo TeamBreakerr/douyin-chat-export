@@ -1,0 +1,12 @@
+data/
+venv/
+__pycache__/
+*.pyc
+node_modules/
+.DS_Store
+.server.pid
+.server.log
+.claude/
+CLAUDE.md
+TECHNICAL.md
+frontend/node_modules/

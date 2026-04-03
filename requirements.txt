@@ -1,0 +1,6 @@
+playwright
+fastapi
+uvicorn
+sqlalchemy
+aiosqlite
+httpx
