@@ -98,7 +98,7 @@ def get_user(uid: str):
     return user
 
 
-# Control panel (must be before catch-all)
+# Control panel
 from backend.control_panel import control_router
 app.include_router(control_router)
 
@@ -107,6 +107,14 @@ _frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "front
 if os.path.isdir(_frontend_dist):
     app.mount("/assets", StaticFiles(directory=os.path.join(_frontend_dist, "assets")), name="assets")
 
+    _index_html = os.path.join(_frontend_dist, "index.html")
+
+    @app.get("/")
+    def serve_frontend_root():
+        return FileResponse(_index_html)
+
     @app.get("/{full_path:path}")
     def serve_frontend(full_path: str):
-        return FileResponse(os.path.join(_frontend_dist, "index.html"))
+        if full_path.startswith("panel"):
+            raise HTTPException(404)
+        return FileResponse(_index_html)
