@@ -76,9 +76,10 @@ class WebChatScraper:
         print("[*] 正在检测登录状态...")
 
         for attempt in range(180):
-            logged_in = await self.page.evaluate("""
-                () => document.cookie.includes('sessionid') || document.cookie.includes('passport_csrf_token')
-            """)
+            # Use Playwright cookie API to check HttpOnly cookies too
+            cookies = await self.context.cookies("https://www.douyin.com")
+            cookie_names = {c["name"] for c in cookies}
+            logged_in = "sessionid" in cookie_names
             if logged_in:
                 print("[+] 已检测到登录状态")
                 return True
@@ -91,11 +92,20 @@ class WebChatScraper:
 
     async def navigate_to_chat(self):
         print("[*] 正在导航至私信页面...")
-        await self.page.goto(CHAT_URL, wait_until="domcontentloaded")
-        try:
-            await self.page.wait_for_selector(SEL_CONV_ITEM, timeout=10000)
-        except Exception:
-            print("[!] 等待会话列表超时，页面可能未完全加载")
+
+        for attempt in range(3):
+            await self.page.goto(CHAT_URL, wait_until="domcontentloaded")
+            try:
+                await self.page.wait_for_selector(SEL_CONV_ITEM, timeout=20000)
+                print(f"[+] 当前页面: {self.page.url}")
+                return
+            except Exception:
+                if attempt < 2:
+                    print(f"[!] 等待会话列表超时，第 {attempt+1} 次重试...")
+                    await asyncio.sleep(3)
+                else:
+                    print("[!] 等待会话列表超时（已重试 3 次），页面可能未完全加载")
+
         await asyncio.sleep(1)
         print(f"[+] 当前页面: {self.page.url}")
 
@@ -245,6 +255,13 @@ class WebChatScraper:
 
         if not conversations:
             print("[-] 未找到会话")
+            # Save debug screenshot
+            debug_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "debug_no_conv.png")
+            try:
+                await self.page.screenshot(path=debug_path)
+                print(f"[*] 调试截图已保存: {debug_path}")
+            except Exception:
+                pass
             return
 
         if self.name_filter:
@@ -981,6 +998,7 @@ class WebChatScraper:
         total_saved = 0
         total_fetched = 0
         batch_num = 0
+        zero_saved_streak = 0  # 连续 saved=0 的批次计数
         pages_per_batch = 20  # 每批获取 20 页 = 1000 条
         has_more = True
         start_time = time.time()
@@ -1156,6 +1174,16 @@ class WebChatScraper:
                 f"total={total_fetched}/{total_saved} oldest={oldest_time} "
                 f"speed={speed:.0f}msg/s elapsed={elapsed:.1f}s hasMore={has_more}"
             )
+
+            # 增量模式：连续 2 批 saved=0 说明已追上历史，停止
+            if incremental and existing_count > 0:
+                if newly_inserted == 0:
+                    zero_saved_streak += 1
+                    if zero_saved_streak >= 2:
+                        print(f"  [*] 增量模式: 连续 {zero_saved_streak} 批无新消息，已追上历史记录")
+                        break
+                else:
+                    zero_saved_streak = 0
 
             if not has_more:
                 print(f"  [*] 已到达聊天记录起点")
