@@ -1,9 +1,14 @@
 """FastAPI backend for browsing exported Douyin chat data."""
+import hashlib
+import hmac
 import os
-from fastapi import FastAPI, Query, HTTPException
+import secrets
+import time
+
+from fastapi import FastAPI, Query, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from . import database
 
@@ -15,6 +20,91 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# ── Auth system ──
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "panel_config.json")
+_active_tokens: dict[str, float] = {}  # token -> expire_timestamp
+_TOKEN_TTL = 7 * 24 * 3600  # 7 days
+
+
+def _get_password_hash() -> str | None:
+    """Read password hash from config."""
+    import json
+    try:
+        with open(_CONFIG_PATH) as f:
+            cfg = json.load(f)
+        return cfg.get("password_hash") or None
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
+def _hash_password(pw: str) -> str:
+    return hashlib.sha256(pw.encode()).hexdigest()
+
+
+def _verify_token(token: str) -> bool:
+    if not token:
+        return False
+    exp = _active_tokens.get(token)
+    if exp and time.time() < exp:
+        return True
+    _active_tokens.pop(token, None)
+    return False
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    # Public paths: auth endpoints, panel, static assets, favicon
+    if (path.startswith("/api/auth/") or
+        path.startswith("/panel") or
+        path.startswith("/assets") or
+        path.startswith("/media") or
+        path == "/favicon.svg" or
+        path == "/" or
+        not path.startswith("/api/")):
+        return await call_next(request)
+    # If no password set, allow all
+    if not _get_password_hash():
+        return await call_next(request)
+    # Check token
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not token:
+        token = request.query_params.get("token", "")
+    if _verify_token(token):
+        return await call_next(request)
+    return JSONResponse({"error": "unauthorized"}, status_code=401)
+
+
+from pydantic import BaseModel
+
+
+class AuthLoginRequest(BaseModel):
+    password: str
+
+
+@app.get("/api/auth/check")
+def auth_check(request: Request):
+    """Check if password is set and if current token is valid."""
+    pw_hash = _get_password_hash()
+    if not pw_hash:
+        return {"need_password": False, "authenticated": True}
+    token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
+    if not token:
+        token = request.query_params.get("token", "")
+    return {"need_password": True, "authenticated": _verify_token(token)}
+
+
+@app.post("/api/auth/login")
+def auth_login(req: AuthLoginRequest):
+    pw_hash = _get_password_hash()
+    if not pw_hash:
+        return {"error": "no password set"}, 400
+    if not hmac.compare_digest(_hash_password(req.password), pw_hash):
+        raise HTTPException(403, "密码错误")
+    token = secrets.token_urlsafe(32)
+    _active_tokens[token] = time.time() + _TOKEN_TTL
+    return {"token": token}
 
 # Serve media files
 media_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "media")
@@ -99,8 +189,13 @@ def get_user(uid: str):
 
 
 # Control panel
-from backend.control_panel import control_router
+from backend.control_panel import control_router, restore_schedule_on_startup
 app.include_router(control_router)
+
+
+@app.on_event("startup")
+async def startup():
+    await restore_schedule_on_startup()
 
 # Serve Vue frontend (must be last)
 _frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
@@ -108,6 +203,10 @@ if os.path.isdir(_frontend_dist):
     app.mount("/assets", StaticFiles(directory=os.path.join(_frontend_dist, "assets")), name="assets")
 
     _index_html = os.path.join(_frontend_dist, "index.html")
+
+    @app.get("/favicon.svg")
+    def serve_favicon():
+        return FileResponse(os.path.join(_frontend_dist, "favicon.svg"), media_type="image/svg+xml")
 
     @app.get("/")
     def serve_frontend_root():

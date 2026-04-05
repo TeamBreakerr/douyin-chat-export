@@ -106,19 +106,25 @@
               </div>
               <!-- 分享卡片 -->
               <div v-else-if="msg.msg_type === 4" class="msg-share-card" @click="openShare(msg)">
-                <div class="msg-share-card-body">
-                  <div class="msg-share-card-title">{{ getShareInfo(msg).title || '[分享]' }}</div>
-                  <div v-if="getShareInfo(msg).author" class="msg-share-card-author">
-                    @ {{ getShareInfo(msg).author }}
-                  </div>
+                <div v-if="getShareInfo(msg).comment || getShareInfo(msg).commentImg" class="msg-share-comment">
+                  <span v-if="getShareInfo(msg).commentUser" class="msg-share-comment-user">{{ getShareInfo(msg).commentUser }}：</span>{{ getShareInfo(msg).comment }}
+                  <img v-if="getShareInfo(msg).commentImg" :src="getShareInfo(msg).commentImg" class="msg-share-comment-img" loading="lazy" @error="onImgError" />
                 </div>
-                <img
-                  v-if="getShareInfo(msg).cover"
-                  :src="getShareInfo(msg).cover"
-                  class="msg-share-card-cover"
-                  loading="lazy"
-                  @error="onImgError"
-                />
+                <div class="msg-share-card-inner">
+                  <div class="msg-share-card-body">
+                    <div class="msg-share-card-title">{{ getShareInfo(msg).title || '[分享]' }}</div>
+                    <div v-if="getShareInfo(msg).author" class="msg-share-card-author">
+                      @ {{ getShareInfo(msg).author }}
+                    </div>
+                  </div>
+                  <img
+                    v-if="getShareInfo(msg).cover"
+                    :src="getShareInfo(msg).cover"
+                    class="msg-share-card-cover"
+                    loading="lazy"
+                    @error="onImgError"
+                  />
+                </div>
               </div>
               <!-- msg_type=1 但实际是贴纸/表情 JSON -->
               <div v-else-if="isJsonSticker(msg)" class="msg-media">
@@ -127,24 +133,38 @@
               </div>
               <!-- msg_type=1 但实际是分享卡片（JSON content 含 content_title） -->
               <div v-else-if="isJsonShare(msg)" class="msg-share-card" @click="openShare(msg)">
-                <div class="msg-share-card-body">
-                  <div class="msg-share-card-title">{{ getShareInfo(msg).title || '[分享]' }}</div>
-                  <div v-if="getShareInfo(msg).author" class="msg-share-card-author">
-                    @ {{ getShareInfo(msg).author }}
-                  </div>
+                <div v-if="getShareInfo(msg).comment || getShareInfo(msg).commentImg" class="msg-share-comment">
+                  <span v-if="getShareInfo(msg).commentUser" class="msg-share-comment-user">{{ getShareInfo(msg).commentUser }}：</span>{{ getShareInfo(msg).comment }}
+                  <img v-if="getShareInfo(msg).commentImg" :src="getShareInfo(msg).commentImg" class="msg-share-comment-img" loading="lazy" @error="onImgError" />
                 </div>
-                <img
-                  v-if="getShareInfo(msg).cover"
-                  :src="getShareInfo(msg).cover"
-                  class="msg-share-card-cover"
-                  loading="lazy"
-                  @error="onImgError"
-                />
+                <div class="msg-share-card-inner">
+                  <div class="msg-share-card-body">
+                    <div class="msg-share-card-title">{{ getShareInfo(msg).title || '[分享]' }}</div>
+                    <div v-if="getShareInfo(msg).author" class="msg-share-card-author">
+                      @ {{ getShareInfo(msg).author }}
+                    </div>
+                  </div>
+                  <img
+                    v-if="getShareInfo(msg).cover"
+                    :src="getShareInfo(msg).cover"
+                    class="msg-share-card-cover"
+                    loading="lazy"
+                    @error="onImgError"
+                  />
+                </div>
               </div>
               <!-- 语音消息 -->
               <div v-else-if="isVoiceMsg(msg)" class="msg-voice">
                 <audio controls preload="none" :src="getVoiceUrl(msg)"></audio>
                 <span class="msg-voice-dur">{{ getVoiceDuration(msg) }}″</span>
+              </div>
+              <!-- 评论引用视频（aweType=700，文本+关联视频） -->
+              <div v-else-if="isVideoComment(msg)" class="msg-share-card" @click="openShare(msg)">
+                <div class="msg-share-comment" v-html="highlightText(msg.content)"></div>
+                <div class="msg-share-card-inner msg-share-card-ref">
+                  <span class="msg-share-card-ref-icon">▶</span>
+                  <span class="msg-share-card-ref-text">引用的视频</span>
+                </div>
               </div>
               <!-- 文本消息 -->
               <div v-else class="msg-bubble" v-html="highlightText(msg.content)"></div>
@@ -375,6 +395,13 @@ function tryParseJson(str) {
   try { return JSON.parse(str) } catch { return null }
 }
 
+// 判断是否为评论引用视频消息（aweType=700 + related_share_video）
+function isVideoComment(msg) {
+  const cj = getContentJson(msg)
+  if (!cj) return false
+  return cj.aweType === 700 && !!cj.related_share_video?.itemId
+}
+
 // 判断 msg_type=1 的消息是否实际上是分享卡片（JSON content 含 content_title）
 function isJsonShare(msg) {
   if (msg.msg_type === 4) return false
@@ -388,12 +415,21 @@ function getShareInfo(msg) {
   // 优先从 content_json (raw_data) 提取
   const cj = getContentJson(msg)
   const source = cj || tryParseShareContent(msg.content)
-  if (!source) return { title: '', author: '', cover: '', itemId: '' }
+  if (!source) return { title: '', author: '', cover: '', itemId: '', comment: '', commentUser: '' }
+  // aweType=10500: 引用视频评论 (comment 字段)
+  // aweType=700: 引用视频评论 (text 字段)
+  const comment = source.comment || source.text || ''
+  const commentUser = source.comment_user_name || ''
+  const commentImg = source.comment_url?.url_list?.[0] || ''
+  const relatedVideo = source.related_share_video || {}
   return {
-    title: source.content_title || '',
+    title: source.content_title || source.aweme_title || '',
     author: source.content_name || '',
     cover: source.cover_url?.url_list?.[0] || '',
-    itemId: source.itemId || '',
+    itemId: source.itemId || relatedVideo.itemId || '',
+    comment,
+    commentUser,
+    commentImg,
   }
 }
 
@@ -1007,7 +1043,8 @@ watch(() => props.jumpToSeq, async (seq) => {
 /* 分享卡片 */
 .msg-share-card {
   display: flex;
-  gap: 10px;
+  flex-direction: column;
+  gap: 6px;
   background: var(--bg-message-other);
   border-radius: 10px;
   border-top-left-radius: 2px;
@@ -1016,6 +1053,27 @@ watch(() => props.jumpToSeq, async (seq) => {
   transition: filter 0.15s;
   max-width: 320px;
   border-left: 3px solid var(--accent);
+}
+.msg-share-comment {
+  font-size: 14px;
+  line-height: 1.5;
+  word-break: break-word;
+}
+.msg-share-comment-user {
+  font-weight: 600;
+  color: var(--accent);
+}
+.msg-share-comment-img {
+  display: block;
+  max-width: 180px;
+  max-height: 180px;
+  border-radius: 6px;
+  margin-top: 6px;
+  object-fit: contain;
+}
+.msg-share-card-inner {
+  display: flex;
+  gap: 10px;
 }
 .msg-share-card:hover {
   filter: brightness(1.1);
@@ -1053,6 +1111,18 @@ watch(() => props.jumpToSeq, async (seq) => {
   object-fit: cover;
   flex-shrink: 0;
   align-self: center;
+}
+.msg-share-card-ref {
+  background: var(--bg-tertiary);
+  border-radius: 6px;
+  padding: 6px 10px;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.msg-share-card-ref-icon {
+  opacity: 0.6;
 }
 
 /* 引用/回复消息 */

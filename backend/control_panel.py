@@ -57,6 +57,28 @@ _scheduler_state = {
 LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "scrape.log")
 
 
+async def restore_schedule_on_startup():
+    """从 panel_config.json 恢复定时任务（容器重启后自动恢复）。"""
+    cfg = _load_config()
+    cron = cfg.get("schedule", "").strip()
+    if not cron:
+        return
+    parsed = _parse_cron(cron)
+    if not parsed:
+        print(f"[scheduler] 配置中的 cron 表达式无效: {cron}", flush=True)
+        return
+    next_run = _next_cron_run(parsed)
+    _scheduler_state["enabled"] = True
+    _scheduler_state["schedule"] = cron
+    _scheduler_state["next_run"] = next_run
+    _scheduler_state["task"] = asyncio.create_task(
+        _cron_loop(parsed, incremental=True)
+    )
+    from datetime import datetime
+    next_str = datetime.fromtimestamp(next_run).strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[scheduler] 已恢复定时任务: {cron}, 下次执行: {next_str}", flush=True)
+
+
 class ScrapeRequest(BaseModel):
     incremental: bool = True
     filter: str = ""
@@ -76,6 +98,30 @@ class ScheduleRequest(BaseModel):
 class CustomFilterAction(BaseModel):
     action: str  # "add" | "remove"
     value: str
+
+
+class PasswordRequest(BaseModel):
+    password: str = ""  # empty = remove password
+
+
+@control_router.post("/api/password")
+async def set_password(req: PasswordRequest):
+    import hashlib
+    cfg = _load_config()
+    if req.password:
+        cfg["password_hash"] = hashlib.sha256(req.password.encode()).hexdigest()
+        _save_config(cfg)
+        return {"status": "ok", "message": "密码已设置"}
+    else:
+        cfg.pop("password_hash", None)
+        _save_config(cfg)
+        return {"status": "ok", "message": "密码已清除"}
+
+
+@control_router.get("/api/password/status")
+async def password_status():
+    cfg = _load_config()
+    return {"has_password": bool(cfg.get("password_hash"))}
 
 
 @control_router.get("", response_class=HTMLResponse)
@@ -328,10 +374,16 @@ async def _cron_loop(parsed: list, incremental: bool):
                 cmd = [sys.executable, "-u", "extract.py"]
                 if incremental:
                     cmd.append("--incremental")
+                # 从 config 读取已配置的会话过滤器
+                cfg = _load_config()
+                filters = cfg.get("custom_filters", [])
+                if filters:
+                    cmd.extend(["--filter", ",".join(filters)])
                 _scrape_state["status"] = "running"
                 _scrape_state["started_at"] = time.time()
                 _scrape_state["finished_at"] = None
-                _scrape_state["message"] = f"定时{'增量' if incremental else '全量'}采集"
+                filter_desc = f" (过滤: {','.join(filters)})" if filters else ""
+                _scrape_state["message"] = f"定时{'增量' if incremental else '全量'}采集{filter_desc}"
                 await _run_scrape(cmd)
             # Wait at least 61 seconds to avoid re-trigger in same minute
             await asyncio.sleep(61)
@@ -657,6 +709,7 @@ PANEL_HTML = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <title>Control Panel - 抖音聊天记录</title>
 <style>
 /* ── Theme variables ── */
@@ -1060,6 +1113,17 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     <div class="meta" id="exportMsg"></div>
   </div>
 
+  <div class="section">
+    <h2>Password</h2>
+    <div class="meta" style="margin-bottom:8px">Set a password to protect the chat viewer. Panel is not protected.</div>
+    <div class="row">
+      <input type="password" id="pwInput" placeholder="Enter password" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg)">
+      <button class="btn btn-primary" onclick="setPassword()">Set</button>
+      <button class="btn" onclick="clearPassword()">Clear</button>
+    </div>
+    <div class="meta" id="pwStatus" style="margin-top:6px"></div>
+  </div>
+
 </div>
 
 <script>
@@ -1277,6 +1341,32 @@ async function startExport() {
   loadStatus();
 }
 
+/* ── Password ── */
+async function loadPasswordStatus() {
+  const r = await fetch('/panel/api/password/status');
+  const d = await r.json();
+  document.getElementById('pwStatus').textContent = d.has_password ? 'Password is set' : 'No password set (viewer is public)';
+}
+async function setPassword() {
+  const pw = document.getElementById('pwInput').value;
+  if (!pw) { document.getElementById('pwStatus').textContent = 'Please enter a password'; return; }
+  const r = await fetch('/panel/api/password', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ password: pw }),
+  });
+  const d = await r.json();
+  document.getElementById('pwStatus').textContent = d.message;
+  document.getElementById('pwInput').value = '';
+}
+async function clearPassword() {
+  const r = await fetch('/panel/api/password', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ password: '' }),
+  });
+  const d = await r.json();
+  document.getElementById('pwStatus').textContent = d.message;
+}
+
 /* ── Login ── */
 let loginPollTimer = null;
 
@@ -1438,6 +1528,7 @@ async function clearLogin() {
 checkLogin();
 
 loadStatus();
+loadPasswordStatus();
 setInterval(loadStatus, 5000);
 </script>
 </body>

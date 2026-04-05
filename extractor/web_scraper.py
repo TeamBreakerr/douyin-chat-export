@@ -1127,8 +1127,13 @@ class WebChatScraper:
                     elif awe_type in (11029, 10500, 10401):
                         # 分享商品/评论
                         msg_type = "share"
-                        if not text:
-                            text = cj.get("push_detail") or "[分享]"
+                        # aweType=10500: 引用视频评论，comment 字段包含评论内容
+                        comment = cj.get("comment", "")
+                        aweme_title = cj.get("aweme_title", "")
+                        if comment:
+                            text = comment
+                        elif not text:
+                            text = cj.get("push_detail") or aweme_title or "[分享]"
                     elif awe_type in (800, 801, 803):
                         msg_type = "share"
                         if not text:

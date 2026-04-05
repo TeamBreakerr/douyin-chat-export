@@ -1,5 +1,5 @@
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import ConversationList from './components/ConversationList.vue'
 import MessageList from './components/MessageList.vue'
 import SearchBar from './components/SearchBar.vue'
@@ -8,6 +8,62 @@ const activeConversation = ref(null)
 const searchHighlight = ref('')
 const jumpToSeq = ref(null)
 const sidebarOpen = ref(false)
+
+// Auth
+const authChecking = ref(true)
+const authenticated = ref(false)
+const loginPassword = ref('')
+const loginError = ref('')
+const authToken = ref(localStorage.getItem('authToken') || '')
+
+async function checkAuth() {
+  try {
+    const headers = authToken.value ? { Authorization: `Bearer ${authToken.value}` } : {}
+    const res = await fetch('/api/auth/check', { headers })
+    const data = await res.json()
+    if (!data.need_password || data.authenticated) {
+      authenticated.value = true
+    }
+  } catch {}
+  authChecking.value = false
+}
+
+async function doLogin() {
+  loginError.value = ''
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: loginPassword.value }),
+    })
+    if (!res.ok) {
+      loginError.value = '密码错误'
+      return
+    }
+    const data = await res.json()
+    authToken.value = data.token
+    localStorage.setItem('authToken', data.token)
+    authenticated.value = true
+  } catch {
+    loginError.value = '登录失败'
+  }
+}
+
+// Inject auth token into all fetch requests
+const _origFetch = window.fetch
+window.fetch = function(url, opts = {}) {
+  if (authToken.value && typeof url === 'string' && url.startsWith('/api/')) {
+    opts.headers = opts.headers || {}
+    if (opts.headers instanceof Headers) {
+      opts.headers.set('Authorization', `Bearer ${authToken.value}`)
+    } else {
+      opts.headers['Authorization'] = `Bearer ${authToken.value}`
+    }
+  }
+  return _origFetch.call(this, url, opts)
+}
+
+onMounted(checkAuth)
 
 const themes = [
   { id: 'dark',   label: '深蓝', color: '#1a1a2e' },
@@ -42,7 +98,32 @@ function navigateToMessage(item) {
 </script>
 
 <template>
-  <div class="app-layout">
+  <!-- Loading -->
+  <div v-if="authChecking" class="login-screen">
+    <div class="login-box">
+      <div class="login-loading">Loading...</div>
+    </div>
+  </div>
+  <!-- Login -->
+  <div v-else-if="!authenticated" class="login-screen">
+    <div class="login-box">
+      <div class="login-title">抖音聊天记录</div>
+      <div class="login-subtitle">请输入密码</div>
+      <form @submit.prevent="doLogin" class="login-form">
+        <input
+          v-model="loginPassword"
+          type="password"
+          placeholder="密码"
+          class="login-input"
+          autofocus
+        />
+        <button type="submit" class="login-btn">登录</button>
+      </form>
+      <div v-if="loginError" class="login-error">{{ loginError }}</div>
+    </div>
+  </div>
+  <!-- Main app -->
+  <div v-else class="app-layout">
     <div class="sidebar-overlay" :class="{ visible: sidebarOpen }" @click="sidebarOpen = false"></div>
     <div class="app-sidebar" :class="{ open: sidebarOpen }">
       <ConversationList
@@ -78,6 +159,74 @@ function navigateToMessage(item) {
 </template>
 
 <style scoped>
+.login-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  background: var(--bg-primary);
+}
+.login-box {
+  text-align: center;
+  padding: 40px;
+  background: var(--bg-secondary);
+  border-radius: 16px;
+  border: 1px solid var(--border-color);
+  min-width: 300px;
+}
+.login-title {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--accent);
+  margin-bottom: 6px;
+}
+.login-subtitle {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin-bottom: 24px;
+}
+.login-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.login-input {
+  padding: 10px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 15px;
+  outline: none;
+  text-align: center;
+}
+.login-input:focus {
+  border-color: var(--accent);
+}
+.login-btn {
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: filter 0.15s;
+}
+.login-btn:hover {
+  filter: brightness(1.15);
+}
+.login-error {
+  margin-top: 12px;
+  color: #ff4d4f;
+  font-size: 13px;
+}
+.login-loading {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
 .app-layout {
   display: flex;
   height: 100vh;
