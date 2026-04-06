@@ -265,8 +265,10 @@ class WebChatScraper:
             return
 
         if self.name_filter:
+            # Support comma-separated multiple filters
+            filter_parts = [f.strip() for f in self.name_filter.split(",") if f.strip()]
             filtered = [c for c in conversations
-                        if self.name_filter in c.get("nickname", "") or self.name_filter in c["name"]]
+                        if any(fp in c.get("nickname", "") or fp in c["name"] for fp in filter_parts)]
             print(f"[*] 过滤后: {len(filtered)} 个会话匹配 \"{self.name_filter}\"")
             if not filtered:
                 print(f"[-] 没有匹配的会话。全部会话名称:")

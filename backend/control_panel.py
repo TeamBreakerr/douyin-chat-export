@@ -374,15 +374,22 @@ async def _cron_loop(parsed: list, incremental: bool):
                 cmd = [sys.executable, "-u", "extract.py"]
                 if incremental:
                     cmd.append("--incremental")
-                # 从 config 读取已配置的会话过滤器
+                # 从 config 读取已配置的会话过滤器，若无则使用数据库中已有的会话名
                 cfg = _load_config()
                 filters = cfg.get("custom_filters", [])
+                if not filters:
+                    # 回退到数据库中已保存的会话名称
+                    from backend.database import get_db
+                    conn = get_db()
+                    convs = conn.execute("SELECT name FROM conversations WHERE name IS NOT NULL AND name != ''").fetchall()
+                    conn.close()
+                    filters = [c[0] for c in convs]
                 if filters:
                     cmd.extend(["--filter", ",".join(filters)])
                 _scrape_state["status"] = "running"
                 _scrape_state["started_at"] = time.time()
                 _scrape_state["finished_at"] = None
-                filter_desc = f" (过滤: {','.join(filters)})" if filters else ""
+                filter_desc = f" (过滤: {','.join(filters[:5])}{'...' if len(filters) > 5 else ''})" if filters else " (全部会话)"
                 _scrape_state["message"] = f"定时{'增量' if incremental else '全量'}采集{filter_desc}"
                 await _run_scrape(cmd)
             # Wait at least 61 seconds to avoid re-trigger in same minute

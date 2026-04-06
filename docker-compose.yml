@@ -2,20 +2,19 @@ services:
   douyin-chat-export:
     build: .
     container_name: douyin-chat-export
-    # ports:
-    #   - "8000:8000"              # uncomment if not using reverse proxy
     volumes:
       - ./data:/app/data
     environment:
+      - TZ=Asia/Shanghai
       - MODE=all                    # web | scraper | all
       - HEADLESS=true               # true for Docker (no display)
       - SCRAPER_INCREMENTAL=true    # incremental by default
       - SCRAPER_FILTER=             # empty = all conversations
       - SCRAPER_SCHEDULE=           # cron expr, e.g. "0 */6 * * *" (empty = no schedule)
     restart: unless-stopped
-    # networks:                     # uncomment if using Docker network with reverse proxy
-    #   - web-internal
+    networks:
+      - web-internal
 
-# networks:
-#   web-internal:
-#     external: true
+networks:
+  web-internal:
+    external: true
