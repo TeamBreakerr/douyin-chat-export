@@ -1,5 +1,5 @@
 <template>
-  <div class="search-container" :class="{ expanded: showResults }">
+  <div ref="containerRef" class="search-container" :class="{ expanded: showResults }">
     <div class="search-input-wrap">
       <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
@@ -21,12 +21,12 @@
         v-for="item in results"
         :key="item.msg_id"
         class="search-result-item"
-        @click="$emit('navigate', item)"
+        @click="showResults = false; $emit('navigate', item)"
       >
-        <div class="result-conv">{{ item.conv_name || '未知会话' }}</div>
+        <div class="result-conv">{{ item.sender_display_name || item.sender_name || '' }}</div>
         <div class="result-content" v-html="highlight(item.content)"></div>
         <div class="result-meta">
-          <span>{{ item.sender_name || '' }}</span>
+          <span>{{ item.conv_name || '未知会话' }}</span>
           <span>{{ formatTime(item.timestamp) }}</span>
         </div>
       </div>
@@ -39,7 +39,7 @@
 </template>
 
 <script setup>
-import { ref } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 
 defineEmits(['navigate'])
 
@@ -48,7 +48,16 @@ const results = ref([])
 const total = ref(0)
 const loading = ref(false)
 const showResults = ref(false)
+const containerRef = ref(null)
 let debounceTimer = null
+
+function onClickOutside(e) {
+  if (containerRef.value && !containerRef.value.contains(e.target)) {
+    showResults.value = false
+  }
+}
+onMounted(() => document.addEventListener('click', onClickOutside))
+onUnmounted(() => document.removeEventListener('click', onClickOutside))
 
 async function search(q) {
   if (!q || q.length < 1) {

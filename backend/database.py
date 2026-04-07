@@ -110,9 +110,11 @@ def search_messages(query, page=1, page_size=50):
     offset = (page - 1) * page_size
 
     rows = conn.execute(
-        """SELECT m.*, c.name as conv_name
+        """SELECT m.*, c.name as conv_name,
+                  COALESCE(u.nickname, m.sender_name, '') as sender_display_name
            FROM messages m
            JOIN conversations c ON m.conv_id = c.conv_id
+           LEFT JOIN users u ON m.sender_uid = u.uid
            WHERE m.content LIKE ?
            ORDER BY m.seq DESC
            LIMIT ? OFFSET ?""",

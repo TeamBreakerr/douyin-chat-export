@@ -754,6 +754,17 @@ watch(() => props.jumpToSeq, async (seq) => {
     cjCache.clear()
     const targetSeq = Math.max(0, seq - 50)
     await fetchMessages(props.conversation.conv_id, null, targetSeq)
+    await nextTick()
+    // 精确滚动到目标消息并高亮
+    const targetMsg = messages.value.find(m => m.seq === seq)
+    if (targetMsg && listRef.value) {
+      const el = listRef.value.querySelector(`[data-msgid="${targetMsg.msg_id}"]`)
+      if (el) {
+        el.scrollIntoView({ block: 'center' })
+        highlightMsgId.value = targetMsg.msg_id
+        setTimeout(() => { highlightMsgId.value = null }, 3000)
+      }
+    }
     emit('jumped')
   }
 })
