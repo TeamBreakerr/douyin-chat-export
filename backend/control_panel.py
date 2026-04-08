@@ -1007,7 +1007,17 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 </style>
 </head>
 <body data-theme="dark">
-<div class="container">
+<div id="loginOverlay" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;width:320px;box-shadow:var(--shadow);text-align:center;">
+    <h2 style="margin:0 0 8px;color:var(--text);">Control Panel</h2>
+    <p style="margin:0 0 20px;color:var(--text2);font-size:14px;">请输入密码</p>
+    <input id="panelPwInput" type="password" placeholder="密码" onkeydown="if(event.key==='Enter')panelLogin()"
+      style="width:100%;box-sizing:border-box;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:15px;margin-bottom:12px;outline:none;">
+    <button onclick="panelLogin()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:15px;cursor:pointer;">登录</button>
+    <div id="panelLoginErr" style="margin-top:10px;color:var(--red);font-size:13px;"></div>
+  </div>
+</div>
+<div class="container" id="mainContainer" style="display:none;">
 
   <!-- Header -->
   <div class="header">
@@ -1122,7 +1132,7 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 
   <div class="section">
     <h2>Password</h2>
-    <div class="meta" style="margin-bottom:8px">Set a password to protect the chat viewer. Panel is not protected.</div>
+    <div class="meta" style="margin-bottom:8px">Set a password to protect the chat viewer and panel.</div>
     <div class="row">
       <input type="password" id="pwInput" placeholder="Enter password" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg)">
       <button class="btn btn-primary" onclick="setPassword()">Set</button>
@@ -1532,11 +1542,78 @@ async function clearLogin() {
   document.getElementById('loginInfo').textContent = 'Session cleared';
 }
 
-checkLogin();
+/* ── Panel Auth ── */
+let panelToken = localStorage.getItem('panel_token') || '';
 
-loadStatus();
-loadPasswordStatus();
-setInterval(loadStatus, 5000);
+function setCookie(name, val, days) {
+  const d = new Date(); d.setTime(d.getTime() + days*86400000);
+  document.cookie = name + '=' + val + ';expires=' + d.toUTCString() + ';path=/';
+}
+
+async function panelAuthCheck() {
+  try {
+    const r = await fetch('/api/auth/check', {
+      headers: panelToken ? {'Authorization': 'Bearer ' + panelToken} : {}
+    });
+    const d = await r.json();
+    if (!d.need_password || d.authenticated) {
+      // Authenticated or no password set
+      setCookie('auth_token', panelToken, 7);
+      document.getElementById('loginOverlay').style.display = 'none';
+      document.getElementById('mainContainer').style.display = '';
+      checkLogin();
+      loadStatus();
+      loadPasswordStatus();
+      setInterval(loadStatus, 5000);
+    } else {
+      document.getElementById('loginOverlay').style.display = 'flex';
+      document.getElementById('mainContainer').style.display = 'none';
+    }
+  } catch(e) {
+    document.getElementById('loginOverlay').style.display = 'flex';
+  }
+}
+
+async function panelLogin() {
+  const pw = document.getElementById('panelPwInput').value;
+  if (!pw) return;
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password: pw})
+    });
+    const d = await r.json();
+    if (d.token) {
+      panelToken = d.token;
+      localStorage.setItem('panel_token', panelToken);
+      setCookie('auth_token', panelToken, 7);
+      document.getElementById('panelLoginErr').textContent = '';
+      panelAuthCheck();
+    } else {
+      document.getElementById('panelLoginErr').textContent = '密码错误';
+    }
+  } catch(e) {
+    document.getElementById('panelLoginErr').textContent = '登录失败';
+  }
+}
+
+// Inject token cookie on every fetch for panel API calls
+const _origFetch = window.fetch;
+window.fetch = function(url, opts) {
+  if (panelToken && typeof url === 'string' && url.startsWith('/panel/')) {
+    opts = opts || {};
+    opts.headers = opts.headers || {};
+    if (opts.headers instanceof Headers) {
+      if (!opts.headers.has('Authorization')) opts.headers.set('Authorization', 'Bearer ' + panelToken);
+    } else {
+      if (!opts.headers['Authorization']) opts.headers['Authorization'] = 'Bearer ' + panelToken;
+    }
+  }
+  return _origFetch.call(this, url, opts);
+};
+
+panelAuthCheck();
 </script>
 </body>
 </html>

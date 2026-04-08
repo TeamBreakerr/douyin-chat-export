@@ -55,22 +55,28 @@ def _verify_token(token: str) -> bool:
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
-    # Public paths: auth endpoints, panel, static assets, favicon
+    # Public paths: auth endpoints, static assets, favicon
     if (path.startswith("/api/auth/") or
-        path.startswith("/panel") or
         path.startswith("/assets") or
         path.startswith("/media") or
-        path == "/favicon.svg" or
-        path == "/" or
-        not path.startswith("/api/")):
+        path == "/favicon.svg"):
+        return await call_next(request)
+    # Protected paths: /api/* and /panel*
+    needs_auth = path.startswith("/api/") or path.startswith("/panel")
+    if not needs_auth:
         return await call_next(request)
     # If no password set, allow all
     if not _get_password_hash():
         return await call_next(request)
-    # Check token
+    # Panel HTML page itself is allowed (login screen is embedded)
+    if path in ("/panel", "/panel/"):
+        return await call_next(request)
+    # Check token from header, query param, or cookie
     token = request.headers.get("Authorization", "").removeprefix("Bearer ").strip()
     if not token:
         token = request.query_params.get("token", "")
+    if not token:
+        token = request.cookies.get("auth_token", "")
     if _verify_token(token):
         return await call_next(request)
     return JSONResponse({"error": "unauthorized"}, status_code=401)
