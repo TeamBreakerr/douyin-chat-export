@@ -124,7 +124,10 @@ python3 export.py --filter "会话名称" --output data/export.jsonl
 - **采集控制**：增量/全量切换、会话过滤（支持自定义输入）、实时日志
 - **定时任务**：标准 cron 表达式、预设快捷按钮
 - **导出管理**：选择格式和会话、一键导出下载
+- **密码保护**：为聊天记录浏览界面和控制面板设置访问密码
 - **主题切换**：Dark / Light / Ocean / Purple 四种主题
+
+![Control Panel](docs/control-panel.png)
 
 ## 注意事项
 
