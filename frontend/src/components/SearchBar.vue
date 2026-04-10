@@ -6,16 +6,31 @@
       </svg>
       <input
         v-model="query"
-        placeholder="搜索聊天记录..."
+        :placeholder="mode === 'semantic' ? '语义搜索...' : '搜索聊天记录...'"
         @input="onInput"
         @focus="showResults = results.length > 0"
         @keydown.escape="showResults = false"
       />
+      <button
+        v-if="semanticAvailable"
+        class="mode-toggle"
+        :class="{ active: mode === 'semantic' }"
+        @click="toggleMode"
+        :title="mode === 'semantic' ? '语义搜索' : '关键词搜索'"
+      >
+        <svg v-if="mode === 'keyword'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <path d="M4 7h16M4 12h10M4 17h6"/>
+        </svg>
+        <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
+          <path d="M12 3l1.5 3.2 3.5.5-2.5 2.4.6 3.5L12 10.9l-3.1 1.7.6-3.5-2.5-2.4 3.5-.5z"/><path d="M5 19h14M8 15h8"/>
+        </svg>
+      </button>
       <span v-if="query" class="search-clear" @click="clear">&#x2715;</span>
     </div>
     <div v-if="showResults" class="search-results">
       <div class="search-results-header">
-        找到 {{ total }} 条结果
+        <span>找到 {{ total }} 条结果</span>
+        <span v-if="mode === 'semantic'" class="mode-badge">语义</span>
       </div>
       <div
         v-for="item in results"
@@ -23,7 +38,10 @@
         class="search-result-item"
         @click="showResults = false; $emit('navigate', item)"
       >
-        <div class="result-conv">{{ item.sender_display_name || item.sender_name || '' }}</div>
+        <div class="result-top">
+          <span class="result-conv">{{ item.sender_display_name || item.sender_name || '' }}</span>
+          <span v-if="item.similarity != null" class="result-similarity">{{ Math.round(item.similarity * 100) }}%</span>
+        </div>
         <div class="result-content" v-html="highlight(item.content)"></div>
         <div class="result-meta">
           <span>{{ item.conv_name || '未知会话' }}</span>
@@ -49,6 +67,8 @@ const total = ref(0)
 const loading = ref(false)
 const showResults = ref(false)
 const containerRef = ref(null)
+const mode = ref('keyword')
+const semanticAvailable = ref(false)
 let debounceTimer = null
 
 function onClickOutside(e) {
@@ -56,10 +76,34 @@ function onClickOutside(e) {
     showResults.value = false
   }
 }
-onMounted(() => document.addEventListener('click', onClickOutside))
+
+async function checkSemanticStatus() {
+  try {
+    const res = await fetch('/api/semantic/status')
+    const data = await res.json()
+    semanticAvailable.value = data.enabled && data.model_loaded
+  } catch {
+    semanticAvailable.value = false
+  }
+}
+
+onMounted(() => {
+  document.addEventListener('click', onClickOutside)
+  checkSemanticStatus()
+  // Recheck periodically
+  const timer = setInterval(checkSemanticStatus, 30000)
+  onUnmounted(() => clearInterval(timer))
+})
 onUnmounted(() => document.removeEventListener('click', onClickOutside))
 
-async function search(q) {
+function toggleMode() {
+  mode.value = mode.value === 'keyword' ? 'semantic' : 'keyword'
+  if (query.value) {
+    doSearch(query.value)
+  }
+}
+
+async function doSearch(q) {
   if (!q || q.length < 1) {
     results.value = []
     showResults.value = false
@@ -67,16 +111,33 @@ async function search(q) {
   }
   loading.value = true
   showResults.value = true
-  const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&page_size=50`)
-  const data = await res.json()
-  results.value = data.items
-  total.value = data.total
+
+  if (mode.value === 'semantic') {
+    const res = await fetch('/api/search/semantic', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: q }),
+    })
+    if (res.ok) {
+      const data = await res.json()
+      results.value = data.items
+      total.value = data.total
+    } else {
+      results.value = []
+      total.value = 0
+    }
+  } else {
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&page_size=50`)
+    const data = await res.json()
+    results.value = data.items
+    total.value = data.total
+  }
   loading.value = false
 }
 
 function onInput() {
   clearTimeout(debounceTimer)
-  debounceTimer = setTimeout(() => search(query.value), 400)
+  debounceTimer = setTimeout(() => doSearch(query.value), 400)
 }
 
 function clear() {
@@ -94,6 +155,7 @@ function escapeHtml(text) {
 function highlight(text) {
   if (!text || !query.value) return escapeHtml(text || '')
   const safe = escapeHtml(text)
+  if (mode.value === 'semantic') return safe
   const escaped = query.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   return safe.replace(
     new RegExp(`(${escaped})`, 'gi'),
@@ -143,6 +205,27 @@ function formatTime(ts) {
   outline: none;
 }
 
+.mode-toggle {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  padding: 2px 4px;
+  cursor: pointer;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  transition: all 0.2s;
+}
+.mode-toggle:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+.mode-toggle.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(88, 166, 255, 0.1);
+}
+
 .search-clear {
   cursor: pointer;
   color: var(--text-muted);
@@ -171,6 +254,17 @@ function formatTime(ts) {
   font-size: 12px;
   color: var(--text-muted);
   border-bottom: 1px solid var(--border-color);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.mode-badge {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(88, 166, 255, 0.15);
+  color: var(--accent);
 }
 
 .search-result-item {
@@ -186,10 +280,22 @@ function formatTime(ts) {
   border-bottom: none;
 }
 
+.result-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 3px;
+}
 .result-conv {
   font-size: 12px;
   color: var(--accent);
-  margin-bottom: 3px;
+}
+.result-similarity {
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--bg-tertiary);
+  padding: 1px 6px;
+  border-radius: 4px;
 }
 .result-content {
   font-size: 13px;

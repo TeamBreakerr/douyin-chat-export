@@ -1131,6 +1131,36 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
   </div>
 
   <div class="section">
+    <h2>Semantic Search</h2>
+    <div class="meta" style="margin-bottom:8px">Enable AI semantic search with local embedding models for vector-based message retrieval.</div>
+    <div class="schedule-row" style="margin-bottom:10px">
+      <label class="switch">
+        <input type="checkbox" id="semanticEnabled" onchange="toggleSemantic(this.checked)">
+        <span class="slider"></span>
+      </label>
+      <span style="font-size:13px;color:var(--text2)">Enable Semantic Search</span>
+    </div>
+    <div id="semanticModels"></div>
+    <div id="semanticStatus" class="meta" style="margin-top:8px"></div>
+    <div id="semanticIndexSection" style="display:none;margin-top:12px">
+      <div class="row" style="margin-bottom:8px;align-items:center;gap:8px">
+        <span style="font-size:13px;color:var(--text2)">Similarity threshold</span>
+        <input type="range" id="semanticThreshold" min="0.1" max="1.0" step="0.05" value="0.6" style="flex:1;max-width:140px;accent-color:var(--accent)" oninput="document.getElementById('thresholdVal').textContent=this.value">
+        <span id="thresholdVal" style="font-size:13px;color:var(--fg);min-width:28px">0.6</span>
+        <button class="btn btn-outline btn-sm" onclick="saveThreshold()">Apply</button>
+      </div>
+      <div class="row">
+        <button class="btn btn-primary" id="indexBtn" onclick="buildIndex(false)">Build Index</button>
+        <button class="btn" onclick="buildIndex(true)">Rebuild Index</button>
+        <span class="meta" id="indexStatus" style="margin-left:8px"></span>
+      </div>
+      <div style="margin-top:6px;background:var(--bg3);border-radius:4px;height:6px;overflow:hidden" id="indexBarWrap" class="hidden">
+        <div id="indexBar" style="height:100%;background:var(--accent);width:0%;transition:width 0.3s"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
     <h2>Password</h2>
     <div class="meta" style="margin-bottom:8px">Set a password to protect the chat viewer and panel.</div>
     <div class="row">
@@ -1542,6 +1572,162 @@ async function clearLogin() {
   document.getElementById('loginInfo').textContent = 'Session cleared';
 }
 
+/* ── Semantic Search ── */
+let semanticPollTimer = null;
+
+async function loadSemanticStatus() {
+  try {
+    const r = await fetch('/api/semantic/status');
+    const d = await r.json();
+    _renderSemanticUI(d);
+  } catch(e) { console.error('Semantic status failed:', e); }
+}
+
+function _renderSemanticUI(d) {
+    document.getElementById('semanticEnabled').checked = d.enabled;
+
+    // Render model cards
+    const box = document.getElementById('semanticModels');
+    box.innerHTML = '';
+    for (const m of d.available_models) {
+      const isSelected = d.model === m.name;
+      const isDownloaded = isSelected && d.model_downloaded;
+      const card = document.createElement('div');
+      card.style.cssText = 'padding:10px 14px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;background:var(--bg)';
+      if (isSelected) card.style.borderColor = 'var(--accent)';
+      card.innerHTML = `
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div>
+            <span style="font-size:13px;color:var(--fg)">${m.display_name}</span>
+            <div class="meta">${m.description}</div>
+            <div class="meta">Disk: ${m.disk_size} &nbsp; Memory: ${m.memory_size}</div>
+          </div>
+          <div>
+            ${isDownloaded && d.model_loaded
+              ? '<span class="status status-completed">Loaded</span>'
+              : isDownloaded
+                ? `<button class="btn btn-primary btn-sm" onclick="loadSemanticModel()">Load</button>`
+                : `<button class="btn btn-primary btn-sm" onclick="downloadModel('${m.name}')">Download</button>`
+            }
+          </div>
+        </div>`;
+      box.appendChild(card);
+    }
+
+    // Download status
+    const st = document.getElementById('semanticStatus');
+    if (d.download.status === 'downloading') {
+      st.textContent = d.download.message;
+      startSemanticPoll();
+    } else if (d.download.status === 'failed') {
+      st.textContent = d.download.message;
+      st.style.color = 'var(--red)';
+    } else {
+      st.textContent = '';
+      st.style.color = '';
+    }
+
+    // Index section
+    const indexSec = document.getElementById('semanticIndexSection');
+    indexSec.style.display = (d.enabled && d.model_downloaded && d.model_loaded) ? '' : 'none';
+    if (d.threshold != null) {
+      document.getElementById('semanticThreshold').value = d.threshold;
+      document.getElementById('thresholdVal').textContent = d.threshold;
+    }
+    const idxSt = document.getElementById('indexStatus');
+    const idxBar = document.getElementById('indexBar');
+    const idxBarWrap = document.getElementById('indexBarWrap');
+    if (d.index.status === 'running') {
+      idxSt.textContent = d.index.message;
+      idxBarWrap.style.display = '';
+      idxBar.style.width = d.index.progress + '%';
+      document.getElementById('indexBtn').disabled = true;
+      startSemanticPoll();
+    } else {
+      document.getElementById('indexBtn').disabled = false;
+      if (d.index_count > 0) {
+        idxSt.textContent = (d.index.status === 'completed' ? d.index.message + ' | ' : '') +
+          'Index: ' + d.index_count.toLocaleString() + ' messages indexed';
+        idxSt.style.color = 'var(--green)';
+      } else if (d.index.status === 'failed') {
+        idxSt.textContent = d.index.message;
+        idxSt.style.color = 'var(--red)';
+      } else {
+        idxSt.textContent = 'No index built yet';
+        idxSt.style.color = '';
+      }
+      idxBarWrap.style.display = 'none';
+    }
+}
+
+function startSemanticPoll() {
+  if (semanticPollTimer) return;
+  semanticPollTimer = setInterval(async () => {
+    const r = await fetch('/api/semantic/status');
+    const d = await r.json();
+    // Re-render UI with latest data
+    _renderSemanticUI(d);
+    if (d.download.status !== 'downloading' && d.index.status !== 'running') {
+      clearInterval(semanticPollTimer);
+      semanticPollTimer = null;
+    }
+  }, 2000);
+}
+
+async function toggleSemantic(enabled) {
+  await fetch('/api/semantic/toggle', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ enabled }),
+  });
+  loadSemanticStatus();
+}
+
+async function downloadModel(modelId) {
+  await fetch('/api/semantic/download', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ model: modelId }),
+  });
+  startSemanticPoll();
+  loadSemanticStatus();
+}
+
+async function loadSemanticModel() {
+  const r = await fetch('/api/semantic/load', { method: 'POST' });
+  if (r.ok) {
+    loadSemanticStatus();
+  } else {
+    const d = await r.json();
+    alert(d.detail || 'Failed to load model');
+  }
+}
+
+async function saveThreshold() {
+  const v = parseFloat(document.getElementById('semanticThreshold').value) || 0.6;
+  await fetch('/api/semantic/toggle', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ enabled: document.getElementById('semanticEnabled').checked, threshold: v }),
+  });
+  loadSemanticStatus();
+}
+
+async function buildIndex(force) {
+  const r = await fetch('/api/semantic/index', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ force }),
+  });
+  if (r.ok) {
+    startSemanticPoll();
+    loadSemanticStatus();
+  } else {
+    const d = await r.json();
+    alert(d.detail || 'Failed to start indexing');
+  }
+}
+
 /* ── Panel Auth ── */
 let panelToken = localStorage.getItem('panel_token') || '';
 
@@ -1564,6 +1750,7 @@ async function panelAuthCheck() {
       checkLogin();
       loadStatus();
       loadPasswordStatus();
+      loadSemanticStatus();
       setInterval(loadStatus, 5000);
     } else {
       document.getElementById('loginOverlay').style.display = 'flex';

@@ -194,6 +194,83 @@ def get_user(uid: str):
     return user
 
 
+# ── Semantic search API ──
+from backend import semantic_search
+
+
+class SemanticToggleRequest(BaseModel):
+    enabled: bool
+    model: str = None
+    threshold: float = None
+
+
+class SemanticDownloadRequest(BaseModel):
+    model: str
+
+
+class SemanticSearchRequest(BaseModel):
+    query: str
+    conversation_id: str = None
+
+
+@app.get("/api/semantic/status")
+def semantic_status():
+    return semantic_search.get_status()
+
+
+@app.post("/api/semantic/toggle")
+def semantic_toggle(req: SemanticToggleRequest):
+    return semantic_search.set_enabled(req.enabled, req.model, req.threshold)
+
+
+@app.post("/api/semantic/download")
+def semantic_download(req: SemanticDownloadRequest):
+    try:
+        return semantic_search.download_model(req.model)
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/semantic/load")
+def semantic_load():
+    cfg = semantic_search._load_config()
+    model_id = cfg.get("semantic_search", {}).get("model", "")
+    if not model_id:
+        raise HTTPException(400, "No model configured")
+    ok = semantic_search.load_model(model_id)
+    if not ok:
+        raise HTTPException(400, "Failed to load model")
+    return {"loaded": True, "model": model_id}
+
+
+class SemanticIndexRequest(BaseModel):
+    force: bool = False
+
+
+@app.post("/api/semantic/index")
+def semantic_index(req: SemanticIndexRequest):
+    try:
+        semantic_search.build_index(force=req.force)
+        return {"status": "started"}
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/search/semantic")
+def semantic_search_api(req: SemanticSearchRequest):
+    cfg = semantic_search._load_config()
+    ss = cfg.get("semantic_search", {})
+    if not ss.get("enabled"):
+        raise HTTPException(403, "Semantic search is not enabled")
+    try:
+        items, total = semantic_search.search(
+            req.query, conv_id=req.conversation_id
+        )
+        return {"items": items, "total": total}
+    except RuntimeError as e:
+        raise HTTPException(400, str(e))
+
+
 # Control panel
 from backend.control_panel import control_router, restore_schedule_on_startup
 app.include_router(control_router)
@@ -202,6 +279,15 @@ app.include_router(control_router)
 @app.on_event("startup")
 async def startup():
     await restore_schedule_on_startup()
+    # Auto-load semantic search model if enabled
+    cfg = semantic_search._load_config()
+    ss = cfg.get("semantic_search", {})
+    if ss.get("enabled") and ss.get("model"):
+        try:
+            semantic_search.load_model(ss["model"])
+            print(f"[semantic] Model loaded: {ss['model']}")
+        except Exception as e:
+            print(f"[semantic] Failed to auto-load model: {e}")
 
 # Serve Vue frontend (must be last)
 _frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")

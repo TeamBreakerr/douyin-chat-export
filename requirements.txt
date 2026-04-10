@@ -5,3 +5,6 @@ sqlalchemy
 aiosqlite
 httpx
 apscheduler
+sentence-transformers
+chromadb
+huggingface-hub
