@@ -168,7 +168,10 @@
               </div>
               <!-- 文本消息 -->
               <div v-else class="msg-bubble" v-html="highlightText(msg.content)"></div>
-              <div class="msg-time">{{ formatTime(msg.timestamp) }}</div>
+              <div class="msg-time">
+                <span v-if="isRecalled(msg)" class="msg-recalled-tag">已撤回</span>
+                {{ formatTime(msg.timestamp) }}
+              </div>
             </div>
           </template>
         </div>
@@ -415,7 +418,25 @@ function getShareInfo(msg) {
   // 优先从 content_json (raw_data) 提取
   const cj = getContentJson(msg)
   const source = cj || tryParseShareContent(msg.content)
-  if (!source) return { title: '', author: '', cover: '', itemId: '', comment: '', commentUser: '' }
+  if (!source) return { title: '', author: '', cover: '', itemId: '', productUrl: '', comment: '', commentUser: '' }
+
+  // 商品卡片 (aweType=11029): 从 im_dynamic_patch.raw_data 提取
+  const patch = source.im_dynamic_patch
+  if (patch?.raw_data) {
+    try {
+      const pr = typeof patch.raw_data === 'string' ? JSON.parse(patch.raw_data) : patch.raw_data
+      const title = pr.content_top?.content || extractShareTitle(msg.content) || ''
+      const cover = pr.top?.content || ''
+      let productUrl = ''
+      const actions = pr.whole_card?.action_info
+      if (actions?.[0]?.params?.schema) {
+        const m = actions[0].params.schema.match(/commodity_id=(\d+)/)
+        if (m) productUrl = 'https://www.douyin.com/product/' + m[1]
+      }
+      return { title, author: '', cover, itemId: '', productUrl, comment: '', commentUser: '', commentImg: '' }
+    } catch {}
+  }
+
   // aweType=10500: 引用视频评论 (comment 字段)
   // aweType=700: 引用视频评论 (text 字段)
   const comment = source.comment || source.text || ''
@@ -423,10 +444,11 @@ function getShareInfo(msg) {
   const commentImg = source.comment_url?.url_list?.[0] || ''
   const relatedVideo = source.related_share_video || {}
   return {
-    title: source.content_title || source.aweme_title || '',
+    title: source.content_title || source.aweme_title || extractShareTitle(msg.content) || '',
     author: source.content_name || '',
     cover: source.cover_url?.url_list?.[0] || '',
     itemId: source.itemId || relatedVideo.itemId || '',
+    productUrl: '',
     comment,
     commentUser,
     commentImg,
@@ -442,6 +464,13 @@ function tryParseShareContent(content) {
   return null
 }
 
+function extractShareTitle(content) {
+  if (!content) return ''
+  // "分享[商品]: 商品名称" / "分享[视频]: 标题" / "[分享视频]标题"
+  const m = content.match(/^(?:分享\[.+?\][:：]\s*|^\[分享视频\])(.+)/s)
+  return m ? m[1].trim() : ''
+}
+
 // 图片 inline_pic base64 fallback
 function getInlinePic(msg) {
   const cj = getContentJson(msg)
@@ -449,6 +478,17 @@ function getInlinePic(msg) {
     return 'data:image/webp;base64,' + cj.inline_pic.replace(/\r?\n/g, '')
   }
   return null
+}
+
+// 撤回消息检测
+function isRecalled(msg) {
+  const cj = getContentJson(msg)
+  if (cj?.is_recalled) return true
+  if (!msg.raw_data) return false
+  try {
+    const raw = typeof msg.raw_data === 'string' ? JSON.parse(msg.raw_data) : msg.raw_data
+    return !!raw.is_recalled
+  } catch { return false }
 }
 
 // 语音消息检测
@@ -571,7 +611,9 @@ async function jumpToRefMsg(ref) {
 // 打开分享视频
 function openShare(msg) {
   const info = getShareInfo(msg)
-  if (info.itemId) {
+  if (info.productUrl) {
+    window.open(info.productUrl, '_blank')
+  } else if (info.itemId) {
     window.open(`https://www.douyin.com/video/${info.itemId}`, '_blank')
   }
 }
@@ -1206,5 +1248,13 @@ watch(() => props.jumpToSeq, async (seq) => {
 }
 .msg-item.msg-self .msg-time {
   text-align: right;
+}
+.msg-recalled-tag {
+  font-size: 10px;
+  color: #e5534b;
+  background: rgba(229, 83, 75, 0.1);
+  padding: 1px 5px;
+  border-radius: 3px;
+  margin-right: 4px;
 }
 </style>
