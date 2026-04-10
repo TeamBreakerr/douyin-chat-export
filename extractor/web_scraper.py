@@ -10,10 +10,16 @@ import sys
 import time
 from datetime import datetime, timedelta
 
-# Fix Windows console encoding for CJK + special chars (e.g. \xa0)
-if sys.stdout.encoding and sys.stdout.encoding.lower() in ('gbk', 'gb2312', 'cp936'):
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+# Fix Windows console encoding: add error handling so unencodable chars
+# (e.g. \xa0) don't crash the script. The entry point (extract.py) handles
+# UTF-8 mode via PYTHONUTF8; this is a fallback for direct imports.
+if sys.platform == 'win32':
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, 'reconfigure'):
+            try:
+                _stream.reconfigure(errors='replace')
+            except Exception:
+                pass
 
 from playwright.async_api import async_playwright
 
@@ -363,6 +369,79 @@ class WebChatScraper:
 
         return all_convs
 
+    async def _ensure_conv_list_loaded(self):
+        """Wait for conversation list to load and scroll to include all items."""
+        try:
+            await self.page.wait_for_selector(SEL_CONV_ITEM, timeout=20000)
+        except Exception:
+            return 0
+        await asyncio.sleep(1)
+
+        prev_count = 0
+        stable_rounds = 0
+        for _ in range(20):
+            count = await self.page.evaluate(f"""() =>
+                document.querySelectorAll('{SEL_CONV_ITEM}').length
+            """)
+            if count <= prev_count:
+                stable_rounds += 1
+                if stable_rounds >= 2:
+                    break
+            else:
+                stable_rounds = 0
+            prev_count = count
+            await self.page.evaluate(f"""() => {{
+                const list = document.querySelector('{SEL_CONV_LIST}');
+                if (list) {{
+                    const scrollable = list.querySelector('[style*="overflow"]') || list;
+                    scrollable.scrollTop += 500;
+                }}
+            }}""")
+            await asyncio.sleep(0.5)
+
+        return prev_count
+
+    async def _find_and_click_conversation(self, target_name):
+        """Find and click a conversation by name using JS-based matching."""
+        result = await self.page.evaluate(f"""(targetName) => {{
+            const normalize = s => s.replace(/[\\s\\u00a0]+/g, ' ').trim();
+            const target = normalize(targetName);
+            const items = document.querySelectorAll('{SEL_CONV_ITEM}');
+            const debugNames = [];
+
+            for (const item of items) {{
+                const titleEl = item.querySelector('{SEL_CONV_TITLE}');
+                if (!titleEl) continue;
+
+                // Extract pure nickname (inner title div or first text node)
+                const innerTitle = titleEl.querySelector('{SEL_CONV_TITLE}');
+                let nickname = '';
+                if (innerTitle) {{
+                    nickname = normalize(innerTitle.textContent);
+                }} else {{
+                    for (const node of titleEl.childNodes) {{
+                        const t = node.textContent?.trim();
+                        if (t) {{ nickname = normalize(t); break; }}
+                    }}
+                }}
+
+                const fullText = normalize(titleEl.textContent);
+                debugNames.push(nickname || fullText.substring(0, 20));
+
+                // Match: exact, substring (either direction), full text
+                if (nickname === target ||
+                    (nickname && target.includes(nickname)) ||
+                    (nickname && nickname.includes(target)) ||
+                    fullText.includes(target)) {{
+                    item.click();
+                    return {{found: true, text: nickname || fullText}};
+                }}
+            }}
+
+            return {{found: false, count: items.length, names: debugNames.slice(0, 10)}};
+        }}""", target_name)
+        return result
+
     async def _download_voice_files(self, messages):
         """下载语音消息的音频文件到本地"""
         voice_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "media", "voice")
@@ -524,21 +603,15 @@ class WebChatScraper:
         # Will try to get real conversation ID from fiber data after clicking
         conv_id = hashlib.md5(conv_name.encode()).hexdigest()[:16]
 
-        clicked = False
-        conv_items = await self.page.query_selector_all(SEL_CONV_ITEM)
-        for item in conv_items:
-            title_el = await item.query_selector(SEL_CONV_TITLE)
-            if title_el:
-                title_text = (await title_el.inner_text()).strip().replace('\xa0', ' ')
-                if clean_name in title_text or title_text in clean_name:
-                    await item.click()
-                    clicked = True
-                    print(f"  [*] 已点击会话: {title_text}")
-                    break
+        # 确保会话列表完整加载（处理上一个会话 reload 后的状态）
+        await self._ensure_conv_list_loaded()
 
-        if not clicked:
-            print(f"  [!] 无法找到会话「{clean_name}」，跳过")
+        result = await self._find_and_click_conversation(clean_name)
+        if not result.get("found"):
+            dbg = result.get("names", [])
+            print(f"  [!] 无法找到会话「{clean_name}」，跳过 (DOM中有 {result.get('count', 0)} 个会话: {dbg})")
             return
+        print(f"  [*] 已点击会话: {result.get('text', '')}")
 
         await asyncio.sleep(2)
 
@@ -653,30 +726,17 @@ class WebChatScraper:
         # 3. 重新加载聊天页面（SDK 内存缓存随页面销毁而清除）
         print(f"  [*] 重新加载聊天页面...")
         await self.page.goto(CHAT_URL, wait_until="domcontentloaded")
-        # 等待会话列表加载
-        try:
-            await self.page.wait_for_selector(SEL_CONV_ITEM, timeout=15000)
-        except Exception:
-            pass
-        await asyncio.sleep(2)
+        await self._ensure_conv_list_loaded()
 
         # 4. 重新点击目标会话（触发 SDK 从 API 加载消息）
         print(f"  [*] 重新点击会话: {clean_name}...")
-        clicked = False
-        conv_items = await self.page.query_selector_all(SEL_CONV_ITEM)
-        for item in conv_items:
-            title_el = await item.query_selector(SEL_CONV_TITLE)
-            if title_el:
-                title_text = (await title_el.inner_text()).strip().replace('\xa0', ' ')
-                if clean_name in title_text or title_text in clean_name:
-                    await item.click()
-                    clicked = True
-                    print(f"  [*] 重新点击会话: {title_text}")
-                    break
-        if not clicked:
-            print(f"  [!] 重新加载后未找到会话「{clean_name}」，跳过 API 模式")
+        result = await self._find_and_click_conversation(clean_name)
+        if not result.get("found"):
+            dbg = result.get("names", [])
+            print(f"  [!] 重新加载后未找到会话「{clean_name}」，跳过 API 模式 (DOM: {result.get('count', 0)} items: {dbg})")
             self.page.remove_listener("request", capture_api_request)
             return
+        print(f"  [*] 已重新点击: {result.get('text', '')}")
 
         # 5. 等待 SDK 发出 API 请求（缓存已清，应该很快）
         print(f"  [*] 等待 SDK 发出 API 请求...")
