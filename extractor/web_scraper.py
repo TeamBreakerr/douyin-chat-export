@@ -369,28 +369,18 @@ class WebChatScraper:
         return all_convs
 
     async def _ensure_conv_list_loaded(self):
-        """Wait for conversation list to load, then ensure scroll is at top.
+        """Wait for conversation list to load.
 
-        Douyin uses virtual scrolling: off-screen items are removed from DOM.
-        We scroll to top so _find_and_click_conversation can see the most
-        recent conversations (which is the order extract_all iterates in).
+        On a freshly loaded chat page, the list renders at the top by default,
+        so we don't scroll here — _find_and_click_conversation handles scrolling
+        as needed. Scrolling unnecessarily can race with virtual-scroll
+        re-renders and break subsequent clicks.
         """
         try:
             await self.page.wait_for_selector(SEL_CONV_ITEM, timeout=20000)
         except Exception:
             return 0
         await asyncio.sleep(1)
-
-        # Scroll to top so the most recent conversations are in DOM
-        await self.page.evaluate(f"""() => {{
-            const list = document.querySelector('{SEL_CONV_LIST}');
-            if (list) {{
-                const scrollable = list.querySelector('[style*="overflow"]') || list;
-                scrollable.scrollTop = 0;
-            }}
-        }}""")
-        await asyncio.sleep(0.5)
-
         count = await self.page.evaluate(f"""() =>
             document.querySelectorAll('{SEL_CONV_ITEM}').length
         """)
@@ -399,24 +389,12 @@ class WebChatScraper:
     async def _find_and_click_conversation(self, target_name):
         """Find and click a conversation by name using JS-based matching.
 
-        Douyin uses virtual scrolling, so not all items are in DOM at once.
-        We scroll top→bottom, trying to match on each step.
+        Tries matching in the currently rendered DOM first. If not found
+        (Douyin uses virtual scrolling, so some items may be off-screen),
+        scrolls down incrementally and retries.
         """
-        # Reset scroll to top first
-        await self.page.evaluate(f"""() => {{
-            const list = document.querySelector('{SEL_CONV_LIST}');
-            if (list) {{
-                const scrollable = list.querySelector('[style*="overflow"]') || list;
-                scrollable.scrollTop = 0;
-            }}
-        }}""")
-        await asyncio.sleep(0.3)
-
-        all_debug_names = []
-        max_scrolls = 20
-
-        for scroll_idx in range(max_scrolls):
-            result = await self.page.evaluate(f"""(targetName) => {{
+        async def _try_match():
+            return await self.page.evaluate(f"""(targetName) => {{
                 const normalize = s => s.replace(/[\\s\\u00a0]+/g, ' ').trim();
                 const target = normalize(targetName);
                 const items = document.querySelectorAll('{SEL_CONV_ITEM}');
@@ -454,15 +432,32 @@ class WebChatScraper:
                 return {{found: false, count: items.length, names: debugNames}};
             }}""", target_name)
 
+        # First attempt: match current DOM (don't disturb scroll state)
+        result = await _try_match()
+        if result.get("found"):
+            return result
+
+        all_debug_names = list(result.get("names", []))
+
+        # Not found in current view; scroll from top, incrementally.
+        await self.page.evaluate(f"""() => {{
+            const list = document.querySelector('{SEL_CONV_LIST}');
+            if (list) {{
+                const scrollable = list.querySelector('[style*="overflow"]') || list;
+                scrollable.scrollTop = 0;
+            }}
+        }}""")
+        await asyncio.sleep(0.5)
+
+        for _ in range(20):
+            result = await _try_match()
             if result.get("found"):
                 return result
 
-            # Accumulate unique debug names across scrolls
             for n in result.get("names", []):
                 if n not in all_debug_names:
                     all_debug_names.append(n)
 
-            # Scroll down; check if we reached bottom
             reached_bottom = await self.page.evaluate(f"""() => {{
                 const list = document.querySelector('{SEL_CONV_LIST}');
                 if (!list) return true;
@@ -472,7 +467,6 @@ class WebChatScraper:
                 return scrollable.scrollTop === before;
             }}""")
             await asyncio.sleep(0.4)
-
             if reached_bottom:
                 break
 
