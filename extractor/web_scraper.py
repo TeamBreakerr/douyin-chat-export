@@ -675,6 +675,12 @@ class WebChatScraper:
             conv_id = real_conv_id
             print(f"  [*] 真实会话ID: {conv_id}")
 
+        # 全量模式：清除该会话的旧消息，避免残留已撤回或已删除的消息
+        if not self.incremental:
+            cur = self._db_conn.execute("DELETE FROM messages WHERE conv_id = ?", (conv_id,))
+            if cur.rowcount > 0:
+                print(f"  [*] 全量模式：已清除该会话旧消息 {cur.rowcount} 条")
+
         upsert_conversation(self._db_conn, conv_id, name=clean_name)
         self._db_conn.commit()
 

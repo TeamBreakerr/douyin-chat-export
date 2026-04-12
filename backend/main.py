@@ -141,6 +141,14 @@ def get_conversation(conv_id: str):
     return conv
 
 
+@app.delete("/api/conversations/{conv_id}")
+def delete_conversation(conv_id: str):
+    conv = database.get_conversation(conv_id)
+    if not conv:
+        raise HTTPException(404, "会话不存在")
+    return database.delete_conversation(conv_id)
+
+
 @app.get("/api/conversations/{conv_id}/messages")
 def list_messages(
     conv_id: str,

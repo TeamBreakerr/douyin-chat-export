@@ -87,6 +87,12 @@ function selectConversation(conv) {
   sidebarOpen.value = false
 }
 
+function onConversationDeleted(convId) {
+  if (activeConversation.value?.conv_id === convId) {
+    activeConversation.value = null
+  }
+}
+
 function navigateToMessage(item) {
   activeConversation.value = {
     conv_id: item.conv_id,
@@ -129,6 +135,7 @@ function navigateToMessage(item) {
       <ConversationList
         :activeId="activeConversation?.conv_id"
         @select="selectConversation"
+        @deleted="onConversationDeleted"
       />
     </div>
     <div class="app-main">

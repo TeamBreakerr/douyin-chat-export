@@ -160,3 +160,29 @@ def get_stats():
     }
     conn.close()
     return stats
+
+
+def delete_conversation_messages(conv_id):
+    """Delete all messages for a conversation (keep the conversation row)."""
+    conn = get_db()
+    cur = conn.execute("DELETE FROM messages WHERE conv_id = ?", (conv_id,))
+    deleted = cur.rowcount
+    conn.execute(
+        "UPDATE conversations SET message_count = 0, last_message_time = 0 WHERE conv_id = ?",
+        (conv_id,),
+    )
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+def delete_conversation(conv_id):
+    """Delete a conversation and all its messages."""
+    conn = get_db()
+    msg_cur = conn.execute("DELETE FROM messages WHERE conv_id = ?", (conv_id,))
+    msg_deleted = msg_cur.rowcount
+    conv_cur = conn.execute("DELETE FROM conversations WHERE conv_id = ?", (conv_id,))
+    conv_deleted = conv_cur.rowcount
+    conn.commit()
+    conn.close()
+    return {"conversation_deleted": conv_deleted, "messages_deleted": msg_deleted}

@@ -29,6 +29,11 @@
             <span>{{ conv.message_count || 0 }} 条消息</span>
           </div>
         </div>
+        <button
+          class="conv-delete"
+          title="删除该会话数据"
+          @click.stop="deleteConversation(conv)"
+        >×</button>
       </div>
       <div v-if="conversations.length === 0" class="conv-empty">
         暂无会话数据
@@ -43,7 +48,7 @@ import { ref, reactive, onMounted } from 'vue'
 const props = defineProps({
   activeId: String,
 })
-defineEmits(['select'])
+const emit = defineEmits(['select', 'deleted'])
 
 const conversations = ref([])
 const total = ref(0)
@@ -99,6 +104,25 @@ function onSearch() {
   searchTimeout = setTimeout(() => {
     fetchConversations(searchQuery.value)
   }, 300)
+}
+
+async function deleteConversation(conv) {
+  const name = conv.name || '未命名'
+  if (!confirm(`确定删除会话「${name}」的所有数据？此操作不可恢复。`)) return
+  try {
+    const res = await fetch(`/api/conversations/${encodeURIComponent(conv.conv_id)}`, {
+      method: 'DELETE',
+    })
+    if (!res.ok) {
+      alert(`删除失败：${res.status}`)
+      return
+    }
+    conversations.value = conversations.value.filter(c => c.conv_id !== conv.conv_id)
+    total.value = Math.max(0, total.value - 1)
+    emit('deleted', conv.conv_id)
+  } catch (e) {
+    alert(`删除失败：${e.message || e}`)
+  }
 }
 
 onMounted(async () => {
@@ -215,6 +239,31 @@ onMounted(async () => {
   font-size: 12px;
   color: var(--text-muted);
   margin-top: 2px;
+}
+
+.conv-delete {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, background 0.15s, color 0.15s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.conv-item:hover .conv-delete {
+  opacity: 1;
+}
+.conv-delete:hover {
+  background: #e53935;
+  color: #fff;
 }
 
 .conv-empty {
