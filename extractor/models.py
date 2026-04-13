@@ -59,6 +59,11 @@ def init_db():
         conn.execute("ALTER TABLE messages ADD COLUMN ref_msg TEXT")
     except sqlite3.OperationalError:
         pass  # 列已存在
+    # 迁移：为旧数据库添加 conversations.avatar_url 列
+    try:
+        conn.execute("ALTER TABLE conversations ADD COLUMN avatar_url TEXT")
+    except sqlite3.OperationalError:
+        pass  # 列已存在
     conn.commit()
     conn.close()
 
@@ -75,16 +80,17 @@ def upsert_user(conn, uid, nickname=None, avatar_url=None, unique_id=None):
     )
 
 
-def upsert_conversation(conn, conv_id, conv_type=1, name=None, participant_uids=None):
+def upsert_conversation(conn, conv_id, conv_type=1, name=None, participant_uids=None, avatar_url=None):
     participants = json.dumps(participant_uids or [])
     conn.execute(
-        """INSERT INTO conversations (conv_id, conv_type, name, participant_uids)
-           VALUES (?, ?, ?, ?)
+        """INSERT INTO conversations (conv_id, conv_type, name, participant_uids, avatar_url)
+           VALUES (?, ?, ?, ?, ?)
            ON CONFLICT(conv_id) DO UPDATE SET
              conv_type=COALESCE(excluded.conv_type, conv_type),
              name=COALESCE(excluded.name, name),
-             participant_uids=COALESCE(excluded.participant_uids, participant_uids)""",
-        (conv_id, conv_type, name, participants),
+             participant_uids=COALESCE(excluded.participant_uids, participant_uids),
+             avatar_url=COALESCE(excluded.avatar_url, avatar_url)""",
+        (conv_id, conv_type, name, participants, avatar_url),
     )
 
 

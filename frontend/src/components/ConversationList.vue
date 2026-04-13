@@ -60,7 +60,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 
 const props = defineProps({
   activeId: String,
@@ -70,42 +70,15 @@ const emit = defineEmits(['select', 'deleted'])
 const conversations = ref([])
 const total = ref(0)
 const searchQuery = ref('')
-const usersMap = reactive({})  // uid -> { nickname, avatar_url }
 const pendingDelete = ref(null)
 const deleting = ref(false)
 let searchTimeout = null
 
-async function fetchUsers() {
-  try {
-    const res = await fetch('/api/users')
-    const users = await res.json()
-    for (const u of users) {
-      usersMap[u.uid] = u
-    }
-  } catch {}
-}
-
 function getConvAvatar(conv) {
-  // 从 participant_uids 找到非自己的参与者头像
-  try {
-    const uids = JSON.parse(conv.participant_uids || '[]')
-    const selfUid = localStorage.getItem('selfUid')
-    const otherUid = uids.find(u => u !== selfUid) || uids[0]
-    if (otherUid && usersMap[otherUid]?.avatar_url) {
-      const url = usersMap[otherUid].avatar_url
-      if (url.startsWith('avatars/')) return `/media/${url}`
-      if (url.startsWith('http')) return url
-    }
-  } catch {}
-  // fallback: 遍历 usersMap，找到昵称匹配会话名的用户
-  for (const uid in usersMap) {
-    const u = usersMap[uid]
-    if (u.nickname && conv.name && conv.name.includes(u.nickname) && u.avatar_url) {
-      const url = u.avatar_url
-      if (url.startsWith('avatars/')) return `/media/${url}`
-      if (url.startsWith('http')) return url
-    }
-  }
+  const url = conv.avatar_url
+  if (!url) return null
+  if (url.startsWith('avatars/')) return `/media/${url}`
+  if (url.startsWith('http')) return url
   return null
 }
 
@@ -159,8 +132,7 @@ async function confirmDelete() {
   }
 }
 
-onMounted(async () => {
-  await fetchUsers()
+onMounted(() => {
   fetchConversations()
 })
 </script>

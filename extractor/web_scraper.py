@@ -627,16 +627,53 @@ class WebChatScraper:
                         avatar_url=local_avatar or avatar_url,
                         unique_id=unique_id)
 
-        # 更新会话的 participant_uids
-        uids = [u.get("uid") for u in users if u.get("uid")]
-        if uids and conv_id:
-            conn.execute(
-                "UPDATE conversations SET participant_uids = ? WHERE conv_id = ?",
-                (json.dumps(uids), conv_id),
-            )
-
         conn.commit()
         print(f"  [*] 已保存 {len(users)} 个用户信息")
+
+    async def _extract_and_save_conv_avatar(self, conv_id):
+        """从当前激活会话的列表项 DOM 抓取头像，下载到本地，写入会话表。"""
+        avatar_url = await self.page.evaluate(f"""() => {{
+            const active = document.querySelector('{SEL_CONV_ITEM}[class*="curConversation"]');
+            if (!active) return '';
+            const img = active.querySelector('img');
+            return img ? img.src : '';
+        }}""")
+        if not avatar_url or not avatar_url.startswith('http'):
+            return
+
+        avatar_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "media", "avatars")
+        os.makedirs(avatar_dir, exist_ok=True)
+
+        ext = "jpg"
+        if ".webp" in avatar_url:
+            ext = "webp"
+        elif ".png" in avatar_url:
+            ext = "png"
+        safe_id = conv_id.replace(':', '_').replace('/', '_')
+        filename = f"conv_{safe_id}.{ext}"
+        local_path = os.path.join(avatar_dir, filename)
+
+        try:
+            resp = await self.page.evaluate("""async (url) => {
+                try {
+                    const r = await fetch(url);
+                    if (!r.ok) return null;
+                    const buf = await r.arrayBuffer();
+                    return Array.from(new Uint8Array(buf));
+                } catch { return null; }
+            }""", avatar_url)
+            if resp and len(resp) > 100:
+                with open(local_path, "wb") as f:
+                    f.write(bytes(resp))
+                rel_path = f"avatars/{filename}"
+                self._db_conn.execute(
+                    "UPDATE conversations SET avatar_url = ? WHERE conv_id = ?",
+                    (rel_path, conv_id),
+                )
+                self._db_conn.commit()
+                print(f"  [*] 已保存会话头像")
+        except Exception as e:
+            print(f"  [!] 下载会话头像失败: {e}")
 
     async def _extract_conversation(self, conv_index, conv_info):
         """Click a conversation and extract all its messages."""
@@ -683,6 +720,9 @@ class WebChatScraper:
 
         upsert_conversation(self._db_conn, conv_id, name=clean_name)
         self._db_conn.commit()
+
+        # 从激活的会话列表项抓取并保存会话头像
+        await self._extract_and_save_conv_avatar(conv_id)
 
         # 提取用户信息（昵称、头像、unique_id）
         await self._extract_and_save_user_info(conv_id)
