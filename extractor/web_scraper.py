@@ -292,7 +292,7 @@ class WebChatScraper:
             display_name = conv.get("nickname") or conv["name"]
             print(f"\n[{i+1}/{len(conversations)}] {display_name} (最后活跃: {conv['time']})")
             try:
-                await self._extract_conversation(conv["index"], conv)
+                await self._extract_conversation(i, conv)
             except Exception as e:
                 print(f"  [!] 错误: {e}")
                 import traceback
@@ -314,18 +314,33 @@ class WebChatScraper:
         print(f"{'='*60}")
 
     async def _load_all_conversations(self):
-        """Scroll conversation list and collect all conversation items."""
-        all_convs = []
-        prev_count = 0
+        """Scroll the conversation list and accumulate all items with dedup.
 
-        for scroll_round in range(20):
+        The list uses virtual scrolling: items that leave the viewport are
+        removed from the DOM, so a single querySelectorAll snapshot misses
+        everything above/below the visible window. We scroll from the top
+        to the bottom, reading items each round and deduping by nickname.
+        """
+        # 先滚到顶部，保证从头开始收集
+        await self.page.evaluate(f"""() => {{
+            const list = document.querySelector('{SEL_CONV_LIST}');
+            if (list) {{
+                const scrollable = list.querySelector('[style*="overflow"]') || list;
+                scrollable.scrollTop = 0;
+            }}
+        }}""")
+        await asyncio.sleep(0.6)
+
+        seen = {}  # key -> conv info (保持插入顺序 = 列表自上而下)
+        stable_rounds = 0
+
+        for _ in range(120):
             convs = await self.page.evaluate(f"""() => {{
                 const items = document.querySelectorAll('{SEL_CONV_ITEM}');
-                return Array.from(items).map((el, idx) => {{
+                return Array.from(items).map(el => {{
                     const titleEl = el.querySelector('{SEL_CONV_TITLE}');
                     const timeEl = el.querySelector('{SEL_CONV_TIME}');
                     const previewEl = el.querySelector('{SEL_CONV_PREVIEW}');
-                    // 提取纯昵称：内部嵌套的 title div 只含昵称
                     let nickname = '';
                     if (titleEl) {{
                         const innerTitle = titleEl.querySelector('div[class*="conversationConversationItemtitle"]');
@@ -338,30 +353,49 @@ class WebChatScraper:
                         nickname: nickname,
                         time: timeEl ? timeEl.textContent.trim() : '',
                         preview: previewEl ? previewEl.textContent.trim() : '',
-                        index: idx,
                     }};
                 }});
             }}""")
 
-            all_convs = convs
-            current_count = len(convs)
+            added = 0
+            for c in convs:
+                key = c.get("nickname") or c.get("name")
+                if key and key not in seen:
+                    seen[key] = c
+                    added += 1
 
-            if current_count > prev_count:
-                print(f"  已加载 {current_count} 个会话...")
-                prev_count = current_count
-            elif scroll_round > 2:
+            reached_bottom = await self.page.evaluate(f"""() => {{
+                const list = document.querySelector('{SEL_CONV_LIST}');
+                if (!list) return true;
+                const scrollable = list.querySelector('[style*="overflow"]') || list;
+                const before = scrollable.scrollTop;
+                scrollable.scrollTop += 400;
+                return scrollable.scrollTop === before;
+            }}""")
+
+            if added == 0:
+                stable_rounds += 1
+            else:
+                stable_rounds = 0
+                print(f"  已加载 {len(seen)} 个会话...")
+
+            # 到底且连续 2 轮无新增 → 视为读完
+            if reached_bottom and stable_rounds >= 2:
                 break
 
-            await self.page.evaluate(f"""() => {{
-                const list = document.querySelector('{SEL_CONV_LIST}');
-                if (list) {{
-                    const scrollable = list.querySelector('[style*="overflow"]') || list;
-                    scrollable.scrollTop += 500;
-                }}
-            }}""")
-            await asyncio.sleep(1)
+            await asyncio.sleep(0.5)
 
-        # Normalize special whitespace (e.g. \xa0) in conversation names
+        # 回到顶部，后续点击流程从熟悉的起点开始
+        await self.page.evaluate(f"""() => {{
+            const list = document.querySelector('{SEL_CONV_LIST}');
+            if (list) {{
+                const scrollable = list.querySelector('[style*="overflow"]') || list;
+                scrollable.scrollTop = 0;
+            }}
+        }}""")
+        await asyncio.sleep(0.5)
+
+        all_convs = list(seen.values())
         for c in all_convs:
             c["name"] = c["name"].replace('\xa0', ' ').strip()
             c["nickname"] = c.get("nickname", "").replace('\xa0', ' ').strip()
