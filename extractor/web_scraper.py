@@ -313,6 +313,20 @@ class WebChatScraper:
         print(f"  用户: {stats['users']}")
         print(f"{'='*60}")
 
+    async def list_conversations(self):
+        """Navigate to chat and return all discovered conversations (no extraction).
+
+        Used by the control panel's "refresh conversation list" action so the
+        user can pick which conversations to scrape/export.
+        """
+        await self.navigate_to_chat()
+        await asyncio.sleep(2)
+
+        print("[*] 正在加载会话列表...")
+        conversations = await self._load_all_conversations()
+        print(f"[+] 共发现 {len(conversations)} 个会话")
+        return conversations
+
     async def _load_all_conversations(self):
         """Scroll the conversation list and accumulate all items with dedup.
 

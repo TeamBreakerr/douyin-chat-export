@@ -54,7 +54,18 @@ _scheduler_state = {
     "next_run": None,
 }
 
+# ── Conversation discovery (refresh conv list) state ──
+_discover_state = {
+    "status": "idle",  # idle | running | completed | failed
+    "message": "",
+    "process": None,
+    "started_at": None,
+    "finished_at": None,
+}
+
 LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "scrape.log")
+DISCOVER_LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "discover.log")
+CONV_LIST_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "conversations_list.json")
 
 
 async def restore_schedule_on_startup():
@@ -82,17 +93,20 @@ async def restore_schedule_on_startup():
 class ScrapeRequest(BaseModel):
     incremental: bool = True
     filter: str = ""
+    conversations: list[str] | None = None  # selected nicknames; overrides filter
 
 
 class ExportRequest(BaseModel):
     format: str = "jsonl"
     filter: str = ""
+    conversations: list[str] | None = None  # selected nicknames; overrides filter
 
 
 class ScheduleRequest(BaseModel):
     enabled: bool
     cron: str = ""  # cron expression: "0 0 * * *" or shorthand
     incremental: bool = True
+    conversations: list[str] | None = None  # selected nicknames for scheduled scrape
 
 
 class CustomFilterAction(BaseModel):
@@ -102,6 +116,11 @@ class CustomFilterAction(BaseModel):
 
 class PasswordRequest(BaseModel):
     password: str = ""  # empty = remove password
+
+
+class SelectedUpdate(BaseModel):
+    section: str  # "scraper" | "export" | "schedule"
+    conversations: list[str]
 
 
 @control_router.post("/api/password")
@@ -173,18 +192,29 @@ async def start_scrape(req: ScrapeRequest):
     if _scrape_state["status"] == "running":
         return JSONResponse({"error": "Scrape already running"}, status_code=409)
 
+    # Selected conversations (checkbox list) take precedence over free-text filter
+    effective_filter = ",".join(req.conversations) if req.conversations else req.filter
+
     cmd = [sys.executable, "-u", "extract.py"]
     if req.incremental:
         cmd.append("--incremental")
-    if req.filter:
-        cmd.extend(["--filter", req.filter])
+    if effective_filter:
+        cmd.extend(["--filter", effective_filter])
 
     _scrape_state["status"] = "running"
     _scrape_state["started_at"] = time.time()
     _scrape_state["finished_at"] = None
     _scrape_state["message"] = f"{'增量' if req.incremental else '全量'}采集"
-    if req.filter:
+    if req.conversations:
+        _scrape_state["message"] += f" ({len(req.conversations)} 个会话)"
+    elif req.filter:
         _scrape_state["message"] += f" (过滤: {req.filter})"
+
+    # Persist selection so it's remembered next time
+    if req.conversations is not None:
+        cfg = _load_config()
+        cfg["scraper_selected"] = list(req.conversations)
+        _save_config(cfg)
 
     asyncio.create_task(_run_scrape(cmd))
     return {"status": "started", "message": _scrape_state["message"]}
@@ -254,6 +284,109 @@ async def manage_custom_filter(req: CustomFilterAction):
     return {"custom_filters": filters}
 
 
+# ── Conversation discovery / selection ────────────────────────────
+
+def _read_conv_list():
+    if not os.path.exists(CONV_LIST_PATH):
+        return {"discovered_at": 0, "items": []}
+    try:
+        with open(CONV_LIST_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"discovered_at": 0, "items": []}
+
+
+@control_router.post("/api/conversations/refresh")
+async def refresh_conversations():
+    """Run a lightweight scrape that only enumerates the conversation list."""
+    if _discover_state["status"] == "running":
+        return JSONResponse({"error": "Refresh already running"}, status_code=409)
+    if _scrape_state["status"] == "running":
+        return JSONResponse({"error": "Scraper is running — stop it first"}, status_code=409)
+
+    _discover_state["status"] = "running"
+    _discover_state["message"] = "正在加载会话列表..."
+    _discover_state["started_at"] = time.time()
+    _discover_state["finished_at"] = None
+
+    cmd = [sys.executable, "-u", "extract.py", "--list-conversations"]
+    asyncio.create_task(_run_discover(cmd))
+    return {"status": "started"}
+
+
+async def _run_discover(cmd):
+    try:
+        os.makedirs(os.path.dirname(DISCOVER_LOG_PATH), exist_ok=True)
+        with open(DISCOVER_LOG_PATH, "w") as log_file:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=log_file,
+                stderr=asyncio.subprocess.STDOUT,
+                cwd=os.path.dirname(os.path.dirname(__file__)),
+            )
+            _discover_state["process"] = proc
+            await proc.wait()
+
+        if proc.returncode == 0:
+            data = _read_conv_list()
+            count = len(data.get("items", []))
+            _discover_state["status"] = "completed"
+            _discover_state["message"] = f"发现 {count} 个会话"
+        else:
+            _discover_state["status"] = "failed"
+            _discover_state["message"] = f"刷新失败 (exit {proc.returncode})"
+    except Exception as e:
+        _discover_state["status"] = "failed"
+        _discover_state["message"] = f"刷新错误: {e}"
+    finally:
+        _discover_state["finished_at"] = time.time()
+        _discover_state["process"] = None
+
+
+@control_router.get("/api/conversations/refresh/status")
+async def refresh_status():
+    data = _read_conv_list()
+    return {
+        "status": _discover_state["status"],
+        "message": _discover_state["message"],
+        "started_at": _discover_state["started_at"],
+        "finished_at": _discover_state["finished_at"],
+        "discovered_at": data.get("discovered_at", 0),
+        "items": data.get("items", []),
+    }
+
+
+@control_router.post("/api/conversations/refresh/stop")
+async def refresh_stop():
+    proc = _discover_state.get("process")
+    if proc and proc.returncode is None:
+        proc.terminate()
+        _discover_state["status"] = "idle"
+        _discover_state["message"] = "已停止"
+        return {"status": "stopped"}
+    return {"status": "not_running"}
+
+
+@control_router.get("/api/conversations/selected")
+async def get_selected():
+    cfg = _load_config()
+    return {
+        "scraper": cfg.get("scraper_selected", []),
+        "export": cfg.get("export_selected", []),
+        "schedule": cfg.get("schedule_selected", []),
+    }
+
+
+@control_router.post("/api/conversations/selected")
+async def set_selected(req: SelectedUpdate):
+    if req.section not in ("scraper", "export", "schedule"):
+        return JSONResponse({"error": "invalid section"}, status_code=400)
+    cfg = _load_config()
+    cfg[f"{req.section}_selected"] = list(req.conversations)
+    _save_config(cfg)
+    return {"status": "ok", "selected": cfg[f"{req.section}_selected"]}
+
+
 @control_router.post("/api/schedule")
 async def set_schedule(req: ScheduleRequest):
     # Cancel existing scheduled task
@@ -265,6 +398,11 @@ async def set_schedule(req: ScheduleRequest):
     _scheduler_state["schedule"] = req.cron if req.enabled else ""
     _scheduler_state["next_run"] = None
 
+    # Always persist the schedule selection so the cron loop + UI stay in sync
+    cfg = _load_config()
+    if req.conversations is not None:
+        cfg["schedule_selected"] = list(req.conversations)
+
     if req.enabled and req.cron:
         parsed = _parse_cron(req.cron)
         if not parsed:
@@ -275,12 +413,10 @@ async def set_schedule(req: ScheduleRequest):
         _scheduler_state["task"] = asyncio.create_task(
             _cron_loop(parsed, req.incremental)
         )
-        cfg = _load_config()
         cfg["schedule"] = req.cron
         _save_config(cfg)
         return {"status": "enabled", "cron": req.cron, "next_run": next_run}
 
-    cfg = _load_config()
     cfg["schedule"] = ""
     _save_config(cfg)
     return {"status": "disabled"}
@@ -374,11 +510,12 @@ async def _cron_loop(parsed: list, incremental: bool):
                 cmd = [sys.executable, "-u", "extract.py"]
                 if incremental:
                     cmd.append("--incremental")
-                # 从 config 读取已配置的会话过滤器，若无则使用数据库中已有的会话名
                 cfg = _load_config()
-                filters = cfg.get("custom_filters", [])
+                # Preferred: schedule_selected (checkbox picks).
+                # Fallback: custom_filters (legacy).
+                # Fallback: all DB conversations (scrape everything we know).
+                filters = cfg.get("schedule_selected") or cfg.get("custom_filters") or []
                 if not filters:
-                    # 回退到数据库中已保存的会话名称
                     from backend.database import get_db
                     conn = get_db()
                     convs = conn.execute("SELECT name FROM conversations WHERE name IS NOT NULL AND name != ''").fetchall()
@@ -406,8 +543,15 @@ async def start_export(req: ExportRequest):
     _export_state["status"] = "running"
     _export_state["message"] = "正在导出..."
 
+    # Persist selection
+    if req.conversations is not None:
+        cfg = _load_config()
+        cfg["export_selected"] = list(req.conversations)
+        _save_config(cfg)
+
+    convs = list(req.conversations) if req.conversations else None
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, _do_export, req.format, req.filter)
+    await loop.run_in_executor(None, _do_export, req.format, req.filter, convs)
     return {
         "status": _export_state["status"],
         "message": _export_state["message"],
@@ -415,20 +559,74 @@ async def start_export(req: ExportRequest):
     }
 
 
-def _do_export(fmt: str, filter_name: str):
+def _do_export(fmt: str, filter_name: str, conversations: list | None):
     try:
         from extractor.exporter import ChatLabExporter
+        import re
+        import zipfile
 
         ext = ".json" if fmt == "json" else ".jsonl"
-        output_path = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)), "data", f"export{ext}"
-        )
-        exporter = ChatLabExporter(conv_name=filter_name or None, output_format=fmt)
-        exporter.export(output_path)
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+
+        # Decide targets
+        if conversations:
+            targets = conversations
+        elif filter_name:
+            targets = [filter_name]
+        else:
+            targets = [None]  # None = exporter picks latest
+
+        if len(targets) <= 1:
+            # Single file
+            output_path = os.path.join(data_dir, f"export{ext}")
+            # Remove stale file so a "conv not found" early-return doesn't look like success
+            if os.path.exists(output_path):
+                try:
+                    os.remove(output_path)
+                except Exception:
+                    pass
+            exporter = ChatLabExporter(conv_name=targets[0] or None, output_format=fmt)
+            exporter.export(output_path)
+            if not os.path.exists(output_path):
+                raise RuntimeError(f"未找到会话: {targets[0] or '(any)'}")
+            _export_state["file_path"] = f"export{ext}"
+            size_mb = os.path.getsize(output_path) / (1024 * 1024)
+            _export_state["message"] = f"导出完成 ({size_mb:.1f} MB)"
+        else:
+            # Multiple → bundle into a zip
+            tmp_dir = os.path.join(data_dir, "export_tmp")
+            os.makedirs(tmp_dir, exist_ok=True)
+            # Clear old tmp files
+            for fn in os.listdir(tmp_dir):
+                try:
+                    os.remove(os.path.join(tmp_dir, fn))
+                except Exception:
+                    pass
+
+            produced = []
+            for name in targets:
+                safe = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", name)[:80] or "conv"
+                path = os.path.join(tmp_dir, f"{safe}{ext}")
+                try:
+                    ChatLabExporter(conv_name=name, output_format=fmt).export(path)
+                    if os.path.exists(path):
+                        produced.append((name, path))
+                except Exception as e:
+                    print(f"[-] 导出 {name} 失败: {e}")
+
+            if not produced:
+                raise RuntimeError("没有成功导出的会话")
+
+            zip_path = os.path.join(data_dir, "export.zip")
+            with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+                for _, path in produced:
+                    zf.write(path, arcname=os.path.basename(path))
+
+            _export_state["file_path"] = "export.zip"
+            size_mb = os.path.getsize(zip_path) / (1024 * 1024)
+            _export_state["message"] = f"导出完成 ({len(produced)} 个会话, {size_mb:.1f} MB)"
+
         _export_state["status"] = "completed"
-        _export_state["file_path"] = f"export{ext}"
-        size_mb = os.path.getsize(output_path) / (1024 * 1024)
-        _export_state["message"] = f"导出完成 ({size_mb:.1f} MB)"
     except Exception as e:
         _export_state["status"] = "failed"
         _export_state["message"] = f"导出失败: {e}"
@@ -968,6 +1166,55 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
   border: 1px solid var(--border); transition: all 0.15s;
 }
 .cron-preset:hover { background: var(--accent); color: #fff; }
+
+/* ── Conversation checkbox list ── */
+.conv-list-box {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 6px 10px;
+  max-height: 220px; overflow-y: auto;
+  padding: 10px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  margin-top: 8px;
+}
+.conv-list-box::-webkit-scrollbar { width: 6px; }
+.conv-list-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.conv-check {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--text); cursor: pointer;
+  padding: 3px 4px; border-radius: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.conv-check:hover { background: var(--bg3); }
+.conv-check input[type=checkbox] {
+  accent-color: var(--accent); cursor: pointer; flex-shrink: 0;
+}
+.conv-list-empty {
+  padding: 14px; text-align: center; font-size: 12px;
+  color: var(--text3);
+  grid-column: 1 / -1;
+}
+.conv-list-toolbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 12px; color: var(--text2);
+}
+.conv-list-toolbar .sep { color: var(--text3); }
+
+/* ── Language switcher ── */
+.lang-switcher {
+  display: inline-flex; gap: 2px;
+  padding: 3px; background: var(--bg3);
+  border-radius: 8px; border: 1px solid var(--border);
+  font-size: 12px;
+}
+.lang-switcher button {
+  background: transparent; border: none; color: var(--text2);
+  padding: 3px 10px; border-radius: 5px; cursor: pointer;
+  font-size: 12px; font-weight: 500;
+}
+.lang-switcher button.active {
+  background: var(--accent); color: #fff;
+}
+
 .switch {
   position: relative; width: 38px; height: 22px; cursor: pointer;
 }
@@ -1009,11 +1256,11 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 <body data-theme="dark">
 <div id="loginOverlay" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;">
   <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;width:320px;box-shadow:var(--shadow);text-align:center;">
-    <h2 style="margin:0 0 8px;color:var(--text);">Control Panel</h2>
-    <p style="margin:0 0 20px;color:var(--text2);font-size:14px;">请输入密码</p>
-    <input id="panelPwInput" type="password" placeholder="密码" onkeydown="if(event.key==='Enter')panelLogin()"
+    <h2 style="margin:0 0 8px;color:var(--text);" data-i18n="panelTitle">控制面板</h2>
+    <p style="margin:0 0 20px;color:var(--text2);font-size:14px;" data-i18n="enterPasswordPrompt">请输入密码</p>
+    <input id="panelPwInput" type="password" data-i18n-placeholder="password" placeholder="密码" onkeydown="if(event.key==='Enter')panelLogin()"
       style="width:100%;box-sizing:border-box;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:15px;margin-bottom:12px;outline:none;">
-    <button onclick="panelLogin()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:15px;cursor:pointer;">登录</button>
+    <button onclick="panelLogin()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:15px;cursor:pointer;" data-i18n="loginBtn">登录</button>
     <div id="panelLoginErr" style="margin-top:10px;color:var(--red);font-size:13px;"></div>
   </div>
 </div>
@@ -1021,43 +1268,47 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 
   <!-- Header -->
   <div class="header">
-    <h1>Douyin Chat Export</h1>
+    <h1 data-i18n="appTitle">抖音聊天记录导出</h1>
     <div class="header-right">
+      <div class="lang-switcher">
+        <button data-lang="zh" onclick="setLang('zh')">中</button>
+        <button data-lang="en" onclick="setLang('en')">EN</button>
+      </div>
       <div class="theme-switcher">
         <div class="theme-dot active" data-t="dark" title="Dark" onclick="setTheme('dark')"></div>
         <div class="theme-dot" data-t="light" title="Light" onclick="setTheme('light')"></div>
         <div class="theme-dot" data-t="ocean" title="Ocean" onclick="setTheme('ocean')"></div>
         <div class="theme-dot" data-t="purple" title="Purple" onclick="setTheme('purple')"></div>
       </div>
-      <a href="/" class="viewer-btn">Chat Viewer &rarr;</a>
+      <a href="/" class="viewer-btn" data-i18n="chatViewer">聊天查看器 &rarr;</a>
     </div>
   </div>
 
   <!-- Stats -->
   <div class="cards">
-    <div class="card"><div class="num" id="convCount">-</div><div class="label">Conversations</div></div>
-    <div class="card"><div class="num" id="msgCount">-</div><div class="label">Messages</div></div>
-    <div class="card"><div class="num" id="userCount">-</div><div class="label">Users</div></div>
+    <div class="card"><div class="num" id="convCount">-</div><div class="label" data-i18n="statConversations">会话</div></div>
+    <div class="card"><div class="num" id="msgCount">-</div><div class="label" data-i18n="statMessages">消息</div></div>
+    <div class="card"><div class="num" id="userCount">-</div><div class="label" data-i18n="statUsers">用户</div></div>
   </div>
 
   <!-- Login -->
   <div class="section" id="loginSection">
-    <h2>Login <span class="status status-idle" id="loginStatus">checking...</span></h2>
+    <h2><span data-i18n="loginTitle">登录</span> <span class="status status-idle" id="loginStatus" data-i18n="checking">检测中...</span></h2>
     <div id="loginInfo" class="meta" style="margin-bottom:10px"></div>
     <div class="row">
-      <button class="btn btn-primary" id="loginBtn" onclick="startLogin()">Scan QR Login</button>
-      <button class="btn btn-danger" id="loginCancelBtn" onclick="cancelLogin()" style="display:none">Cancel</button>
-      <button class="btn btn-outline btn-sm" onclick="clearLogin()">Clear Session</button>
+      <button class="btn btn-primary" id="loginBtn" onclick="startLogin()" data-i18n="scanQr">扫码登录</button>
+      <button class="btn btn-danger" id="loginCancelBtn" onclick="cancelLogin()" style="display:none" data-i18n="cancel">取消</button>
+      <button class="btn btn-outline btn-sm" onclick="clearLogin()" data-i18n="clearSession">清除会话</button>
     </div>
     <div id="loginScreenshot" style="display:none;margin-top:14px;position:relative;user-select:none;">
-      <div style="font-size:11px;color:var(--text3);margin-bottom:6px;">Click the screenshot to interact. Type below to input text.</div>
+      <div style="font-size:11px;color:var(--text3);margin-bottom:6px;" data-i18n="clickScreenshotHint">点击截图进行交互。下方输入文本后回车发送。</div>
       <div style="text-align:center;">
         <img id="loginImg" style="max-width:100%;border-radius:8px;border:1px solid var(--border);cursor:crosshair;"
              onmousedown="imgMouseDown(event)" onmousemove="imgMouseMove(event)" onmouseup="imgMouseUp(event)"
              ondragstart="return false" />
       </div>
       <div style="display:flex;gap:8px;margin-top:10px;align-items:center;">
-        <input type="text" id="loginKeyInput" placeholder="Type here and press Enter to send..."
+        <input type="text" id="loginKeyInput" data-i18n-placeholder="typeAndEnter" placeholder="输入文字后回车发送..."
                style="flex:1;" onkeydown="loginKeyDown(event)" autocomplete="off" />
         <button class="btn btn-outline btn-sm" onclick="sendLoginKey('Backspace')">⌫</button>
         <button class="btn btn-outline btn-sm" onclick="sendLoginKey('Tab')">Tab</button>
@@ -1066,31 +1317,46 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     </div>
   </div>
 
+  <!-- Conversations (shared source of truth for the checkbox lists below) -->
+  <div class="section">
+    <h2><span data-i18n="convListTitle">会话列表</span> <span class="status status-idle" id="discoverStatus" data-i18n="idle">闲置</span></h2>
+    <div class="row">
+      <button class="btn btn-primary" id="refreshConvsBtn" onclick="refreshConvs()" data-i18n="refreshConvList">刷新会话列表</button>
+      <button class="btn btn-danger" id="stopRefreshBtn" onclick="stopRefreshConvs()" style="display:none" data-i18n="cancel">取消</button>
+      <span class="meta" id="discoverMeta"></span>
+    </div>
+    <div class="meta" id="discoverHint" style="margin-top:6px;" data-i18n="convListHint">点击"刷新会话列表"从抖音加载全部会话，然后在下方采集/导出/定时各节勾选需要处理的会话。</div>
+  </div>
+
   <!-- Scraper -->
   <div class="section">
-    <h2>Scraper <span class="status status-idle" id="scrapeStatus">idle</span></h2>
+    <h2><span data-i18n="scraperTitle">采集</span> <span class="status status-idle" id="scrapeStatus" data-i18n="idle">闲置</span></h2>
     <div class="row">
       <div class="toggle">
         <input type="radio" name="mode" id="modeIncr" value="incremental" checked>
-        <label for="modeIncr">Incremental</label>
+        <label for="modeIncr" data-i18n="incremental">增量</label>
         <input type="radio" name="mode" id="modeFull" value="full">
-        <label for="modeFull">Full</label>
+        <label for="modeFull" data-i18n="full">全量</label>
       </div>
-      <select id="scrapeFilter"><option value="">All conversations</option></select>
-      <input type="text" id="scrapeCustomInput" placeholder="Custom filter..." style="width:140px"
-             onkeydown="if(event.key==='Enter')addCustomFilter()">
-      <button class="btn btn-outline btn-sm" onclick="addCustomFilter()" title="Add to list">+</button>
-      <button class="btn btn-primary" id="scrapeBtn" onclick="startScrape()">Start</button>
-      <button class="btn btn-danger" id="stopBtn" onclick="stopScrape()" style="display:none">Stop</button>
+      <button class="btn btn-primary" id="scrapeBtn" onclick="startScrape()" data-i18n="start">开始</button>
+      <button class="btn btn-danger" id="stopBtn" onclick="stopScrape()" style="display:none" data-i18n="stop">停止</button>
     </div>
-    <div class="chip-list" id="customChips"></div>
+    <div class="conv-list-toolbar" style="margin-top:10px;">
+      <span data-i18n="selectConvsLabel">选择会话:</span>
+      <a href="#" onclick="selectAllConvs('scrape',true);return false;" data-i18n="selectAll">全选</a>
+      <span class="sep">·</span>
+      <a href="#" onclick="selectAllConvs('scrape',false);return false;" data-i18n="selectNone">清空</a>
+      <span class="sep">·</span>
+      <span id="scrapeConvCount">0 / 0</span>
+    </div>
+    <div class="conv-list-box" id="scrapeConvList"></div>
     <div class="meta" id="scrapeTime"></div>
     <div class="log-box" id="scrapeLog"></div>
   </div>
 
   <!-- Schedule -->
   <div class="section">
-    <h2>Schedule</h2>
+    <h2 data-i18n="scheduleTitle">定时任务</h2>
     <div class="schedule-row">
       <label class="switch">
         <input type="checkbox" id="scheduleEnabled">
@@ -1103,40 +1369,57 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
         <input type="text" id="cronMonth" value="*" style="width:42px;text-align:center" placeholder="mon">
         <input type="text" id="cronDow" value="*" style="width:42px;text-align:center" placeholder="dow">
       </div>
-      <button class="btn btn-outline btn-sm" onclick="updateSchedule()">Apply</button>
+      <button class="btn btn-outline btn-sm" onclick="updateSchedule()" data-i18n="apply">应用</button>
     </div>
     <div style="margin-top:6px;display:flex;gap:12px;flex-wrap:wrap;">
-      <span style="font-size:11px;color:var(--text3);">min hour day month weekday</span>
-      <span class="cron-preset" onclick="setCron('0 0 * * *')">Every midnight</span>
-      <span class="cron-preset" onclick="setCron('0 */6 * * *')">Every 6 hours</span>
-      <span class="cron-preset" onclick="setCron('0 8,20 * * *')">8AM & 8PM</span>
-      <span class="cron-preset" onclick="setCron('30 2 * * 1')">Mon 2:30AM</span>
+      <span style="font-size:11px;color:var(--text3);" data-i18n="cronHint">分 时 日 月 周</span>
+      <span class="cron-preset" onclick="setCron('0 0 * * *')" data-i18n="cronMidnight">每天 00:00</span>
+      <span class="cron-preset" onclick="setCron('0 */6 * * *')" data-i18n="cron6h">每 6 小时</span>
+      <span class="cron-preset" onclick="setCron('0 8,20 * * *')" data-i18n="cron8am8pm">每天 8 点 & 20 点</span>
+      <span class="cron-preset" onclick="setCron('30 2 * * 1')" data-i18n="cronMon">周一 02:30</span>
     </div>
+    <div class="conv-list-toolbar" style="margin-top:10px;">
+      <span data-i18n="selectConvsLabel">选择会话:</span>
+      <a href="#" onclick="selectAllConvs('schedule',true);return false;" data-i18n="selectAll">全选</a>
+      <span class="sep">·</span>
+      <a href="#" onclick="selectAllConvs('schedule',false);return false;" data-i18n="selectNone">清空</a>
+      <span class="sep">·</span>
+      <span id="scheduleConvCount">0 / 0</span>
+    </div>
+    <div class="conv-list-box" id="scheduleConvList"></div>
     <div class="meta" id="scheduleMeta" style="margin-top:6px;"></div>
   </div>
 
   <!-- Export -->
   <div class="section">
-    <h2>Export <span class="status status-idle" id="exportStatus">idle</span></h2>
+    <h2><span data-i18n="exportTitle">导出</span> <span class="status status-idle" id="exportStatus" data-i18n="idle">闲置</span></h2>
     <div class="row">
       <select id="exportFormat">
         <option value="jsonl">JSONL</option>
         <option value="json">JSON</option>
       </select>
-      <select id="exportFilter"><option value="">All conversations</option></select>
-      <button class="btn btn-primary" id="exportBtn" onclick="startExport()">Export</button>
-      <a class="btn btn-success" id="downloadBtn" style="display:none;text-decoration:none" href="/panel/api/export/download">Download</a>
+      <button class="btn btn-primary" id="exportBtn" onclick="startExport()" data-i18n="exportBtn">导出</button>
+      <a class="btn btn-success" id="downloadBtn" style="display:none;text-decoration:none" href="/panel/api/export/download" data-i18n="download">下载</a>
     </div>
+    <div class="conv-list-toolbar" style="margin-top:10px;">
+      <span data-i18n="selectConvsLabel">选择会话:</span>
+      <a href="#" onclick="selectAllConvs('export',true);return false;" data-i18n="selectAll">全选</a>
+      <span class="sep">·</span>
+      <a href="#" onclick="selectAllConvs('export',false);return false;" data-i18n="selectNone">清空</a>
+      <span class="sep">·</span>
+      <span id="exportConvCount">0 / 0</span>
+    </div>
+    <div class="conv-list-box" id="exportConvList"></div>
     <div class="meta" id="exportMsg"></div>
   </div>
 
   <div class="section">
-    <h2>Password</h2>
-    <div class="meta" style="margin-bottom:8px">Set a password to protect the chat viewer and panel.</div>
+    <h2 data-i18n="passwordTitle">密码</h2>
+    <div class="meta" style="margin-bottom:8px" data-i18n="passwordDesc">设置密码以保护聊天查看器和控制面板。</div>
     <div class="row">
-      <input type="password" id="pwInput" placeholder="Enter password" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg)">
-      <button class="btn btn-primary" onclick="setPassword()">Set</button>
-      <button class="btn" onclick="clearPassword()">Clear</button>
+      <input type="password" id="pwInput" data-i18n-placeholder="enterPassword" placeholder="输入密码" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg)">
+      <button class="btn btn-primary" onclick="setPassword()" data-i18n="setBtn">设置</button>
+      <button class="btn" onclick="clearPassword()" data-i18n="clearBtn">清除</button>
     </div>
     <div class="meta" id="pwStatus" style="margin-top:6px"></div>
   </div>
@@ -1144,6 +1427,186 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 </div>
 
 <script>
+/* ── i18n ── */
+const T = {
+  zh: {
+    appTitle: '抖音聊天记录导出',
+    chatViewer: '聊天查看器 →',
+    panelTitle: '控制面板',
+    enterPasswordPrompt: '请输入密码',
+    password: '密码',
+    loginBtn: '登录',
+    statConversations: '会话',
+    statMessages: '消息',
+    statUsers: '用户',
+    loginTitle: '登录',
+    scanQr: '扫码登录',
+    cancel: '取消',
+    clearSession: '清除会话',
+    clickScreenshotHint: '点击截图进行交互。下方输入文本后回车发送。',
+    typeAndEnter: '输入文字后回车发送...',
+    convListTitle: '会话列表',
+    refreshConvList: '刷新会话列表',
+    convListHint: '点击"刷新会话列表"从抖音加载全部会话，然后在下方采集/导出/定时各节勾选需要处理的会话。',
+    scraperTitle: '采集',
+    incremental: '增量',
+    full: '全量',
+    start: '开始',
+    stop: '停止',
+    selectConvsLabel: '选择会话:',
+    selectAll: '全选',
+    selectNone: '清空',
+    scheduleTitle: '定时任务',
+    apply: '应用',
+    cronHint: '分 时 日 月 周',
+    cronMidnight: '每天 00:00',
+    cron6h: '每 6 小时',
+    cron8am8pm: '每天 8 点 & 20 点',
+    cronMon: '周一 02:30',
+    exportTitle: '导出',
+    exportBtn: '导出',
+    download: '下载',
+    passwordTitle: '密码',
+    passwordDesc: '设置密码以保护聊天查看器和控制面板。',
+    enterPassword: '输入密码',
+    setBtn: '设置',
+    clearBtn: '清除',
+    idle: '闲置',
+    running: '进行中',
+    completed: '已完成',
+    failed: '失败',
+    checking: '检测中...',
+    loginActive: '登录有效',
+    loginExpired: '登录已过期 — 请重新扫码',
+    loginNoProfile: '未登录 — 请扫码登录',
+    sessionCleared: '会话已清除',
+    clearLoginConfirm: '确定清除登录会话？需要重新扫码。',
+    passwordSet: '密码已设置',
+    passwordEmpty: '请输入密码',
+    noPasswordSet: '未设置密码（查看器公开）',
+    passwordIsSet: '密码已设置',
+    startedAt: '开始: ',
+    finishedAt: '完成: ',
+    noOutput: '(无输出)',
+    nextRun: '下次运行: ',
+    noConvsDiscovered: '尚未发现会话。点击上方"刷新会话列表"。',
+    waitingScan: '等待扫码',
+    startingLogin: '正在启动',
+    error: '错误',
+    convsCount: (n, tot) => n + ' / ' + tot,
+    discoveredAt: (t) => '最近刷新: ' + t,
+    discovered: (n) => '发现 ' + n + ' 个会话',
+    confirmMultiExport: (n) => '将导出 ' + n + ' 个会话并打包为 zip，是否继续？',
+    loginFailed: '登录失败',
+    wrongPassword: '密码错误',
+  },
+  en: {
+    appTitle: 'Douyin Chat Export',
+    chatViewer: 'Chat Viewer →',
+    panelTitle: 'Control Panel',
+    enterPasswordPrompt: 'Please enter password',
+    password: 'Password',
+    loginBtn: 'Login',
+    statConversations: 'Conversations',
+    statMessages: 'Messages',
+    statUsers: 'Users',
+    loginTitle: 'Login',
+    scanQr: 'Scan QR Login',
+    cancel: 'Cancel',
+    clearSession: 'Clear Session',
+    clickScreenshotHint: 'Click the screenshot to interact. Type below to input text.',
+    typeAndEnter: 'Type here and press Enter to send...',
+    convListTitle: 'Conversations',
+    refreshConvList: 'Refresh conversation list',
+    convListHint: 'Click "Refresh conversation list" to load all conversations from Douyin, then check the ones you want in each section below.',
+    scraperTitle: 'Scraper',
+    incremental: 'Incremental',
+    full: 'Full',
+    start: 'Start',
+    stop: 'Stop',
+    selectConvsLabel: 'Select conversations:',
+    selectAll: 'Select all',
+    selectNone: 'Clear',
+    scheduleTitle: 'Schedule',
+    apply: 'Apply',
+    cronHint: 'min hour day month weekday',
+    cronMidnight: 'Every midnight',
+    cron6h: 'Every 6 hours',
+    cron8am8pm: '8AM & 8PM',
+    cronMon: 'Mon 2:30AM',
+    exportTitle: 'Export',
+    exportBtn: 'Export',
+    download: 'Download',
+    passwordTitle: 'Password',
+    passwordDesc: 'Set a password to protect the chat viewer and panel.',
+    enterPassword: 'Enter password',
+    setBtn: 'Set',
+    clearBtn: 'Clear',
+    idle: 'idle',
+    running: 'running',
+    completed: 'completed',
+    failed: 'failed',
+    checking: 'checking...',
+    loginActive: 'Login session valid',
+    loginExpired: 'Session expired — click Scan QR Login',
+    loginNoProfile: 'No login session — click Scan QR Login',
+    sessionCleared: 'Session cleared',
+    clearLoginConfirm: 'Clear login session? You will need to re-scan QR code.',
+    passwordSet: 'Password saved',
+    passwordEmpty: 'Please enter a password',
+    noPasswordSet: 'No password set (viewer is public)',
+    passwordIsSet: 'Password is set',
+    startedAt: 'Started: ',
+    finishedAt: 'Finished: ',
+    noOutput: '(no output)',
+    nextRun: 'Next run: ',
+    noConvsDiscovered: 'No conversations discovered yet. Click "Refresh conversation list" above.',
+    waitingScan: 'waiting scan',
+    startingLogin: 'starting',
+    error: 'error',
+    convsCount: (n, tot) => n + ' / ' + tot,
+    discoveredAt: (t) => 'Last refresh: ' + t,
+    discovered: (n) => 'Found ' + n + ' conversations',
+    confirmMultiExport: (n) => 'Export ' + n + ' conversations as a zip. Continue?',
+    loginFailed: 'Login failed',
+    wrongPassword: 'Wrong password',
+  },
+};
+
+let lang = localStorage.getItem('panel-lang') || 'zh';
+
+function t(key, ...args) {
+  const v = (T[lang] && T[lang][key]) ?? (T.zh && T.zh[key]) ?? key;
+  return typeof v === 'function' ? v(...args) : v;
+}
+
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    const v = T[lang]?.[key];
+    if (typeof v === 'string') el.textContent = v;
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    const v = T[lang]?.[key];
+    if (typeof v === 'string') el.placeholder = v;
+  });
+  document.querySelectorAll('.lang-switcher button').forEach(b => {
+    b.classList.toggle('active', b.dataset.lang === lang);
+  });
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+}
+
+function setLang(l) {
+  lang = l;
+  localStorage.setItem('panel-lang', l);
+  applyI18n();
+  // Re-render dynamic texts (counts, meta, etc.)
+  renderDiscoverMeta();
+  renderConvCounts();
+  refreshStatusLabels();
+}
+
 /* ── Theme ── */
 function setTheme(t) {
   document.body.setAttribute('data-theme', t);
@@ -1155,8 +1618,16 @@ function setTheme(t) {
   if (saved) setTheme(saved);
 })();
 
-/* ── State ── */
-let customFilters = [];
+/* ── Conversation selection state ── */
+let discoveredConvs = [];     // [{nickname, name, time, preview}, ...]
+let discoveredAt = 0;
+let selectedMap = {           // section -> Set of nicknames
+  scraper: new Set(),
+  export: new Set(),
+  schedule: new Set(),
+};
+let lastDiscoverStatus = 'idle';
+let lastDiscoverMsg = '';
 
 async function loadStatus() {
   try {
@@ -1169,13 +1640,12 @@ async function loadStatus() {
     // Scrape status
     const ss = d.scrape;
     const se = document.getElementById('scrapeStatus');
-    se.textContent = ss.status;
-    se.className = 'status status-' + ss.status;
+    setStatusEl(se, ss.status);
     document.getElementById('scrapeBtn').disabled = ss.status === 'running';
     document.getElementById('stopBtn').style.display = ss.status === 'running' ? '' : 'none';
     let timeStr = '';
-    if (ss.started_at) timeStr += 'Started: ' + new Date(ss.started_at * 1000).toLocaleTimeString();
-    if (ss.finished_at) timeStr += '  Finished: ' + new Date(ss.finished_at * 1000).toLocaleTimeString();
+    if (ss.started_at) timeStr += t('startedAt') + new Date(ss.started_at * 1000).toLocaleTimeString();
+    if (ss.finished_at) timeStr += '  ' + t('finishedAt') + new Date(ss.finished_at * 1000).toLocaleTimeString();
     if (ss.message) timeStr += '  ' + ss.message;
     document.getElementById('scrapeTime').textContent = timeStr;
 
@@ -1186,28 +1656,10 @@ async function loadStatus() {
     // Export status
     const es = d.export;
     const ee = document.getElementById('exportStatus');
-    ee.textContent = es.status;
-    ee.className = 'status status-' + es.status;
+    setStatusEl(ee, es.status);
     document.getElementById('exportBtn').disabled = es.status === 'running';
     document.getElementById('exportMsg').textContent = es.message || '';
     document.getElementById('downloadBtn').style.display = (es.status === 'completed' && es.file_path) ? '' : 'none';
-
-    // Scraper filter: custom filters + DB conversation names
-    customFilters = d.custom_filters || [];
-    const dbNames = d.conversation_names || [];
-    buildScrapeFilter(dbNames);
-    renderChips();
-
-    // Export filter: only from DB
-    const expSel = document.getElementById('exportFilter');
-    const expCur = expSel.value;
-    expSel.innerHTML = '<option value="">All conversations</option>';
-    for (const name of dbNames) {
-      const opt = document.createElement('option');
-      opt.value = name; opt.textContent = name;
-      expSel.appendChild(opt);
-    }
-    expSel.value = expCur;
 
     // Schedule status
     const sch = d.scheduler;
@@ -1222,74 +1674,185 @@ async function loadStatus() {
     }
     let schMeta = '';
     if (sch.enabled && sch.next_run) {
-      schMeta = 'Next run: ' + new Date(sch.next_run * 1000).toLocaleString();
+      schMeta = t('nextRun') + new Date(sch.next_run * 1000).toLocaleString();
     }
     document.getElementById('scheduleMeta').textContent = schMeta;
 
   } catch (e) { console.error('Status fetch failed:', e); }
 }
 
-function buildScrapeFilter(dbNames) {
-  const sel = document.getElementById('scrapeFilter');
-  const cur = sel.value;
-  sel.innerHTML = '<option value="">All conversations</option>';
-  // custom filters first
-  if (customFilters.length > 0) {
-    const grp1 = document.createElement('optgroup');
-    grp1.label = 'Custom';
-    for (const f of customFilters) {
-      const opt = document.createElement('option');
-      opt.value = f; opt.textContent = f;
-      grp1.appendChild(opt);
-    }
-    sel.appendChild(grp1);
-  }
-  // DB names
-  if (dbNames.length > 0) {
-    const grp2 = document.createElement('optgroup');
-    grp2.label = 'Database';
-    for (const name of dbNames) {
-      const opt = document.createElement('option');
-      opt.value = name; opt.textContent = name;
-      grp2.appendChild(opt);
-    }
-    sel.appendChild(grp2);
-  }
-  sel.value = cur;
+function setStatusEl(el, status) {
+  if (!el) return;
+  el.textContent = t(status) || status;
+  el.className = 'status status-' + status;
 }
 
-function renderChips() {
-  const box = document.getElementById('customChips');
+function refreshStatusLabels() {
+  // Re-apply current status text (used after language switch)
+  const scrapeStatus = document.getElementById('scrapeStatus');
+  if (scrapeStatus) {
+    const cur = [...scrapeStatus.classList].find(c => c.startsWith('status-') && c !== 'status');
+    if (cur) setStatusEl(scrapeStatus, cur.replace('status-', ''));
+  }
+  const exportStatus = document.getElementById('exportStatus');
+  if (exportStatus) {
+    const cur = [...exportStatus.classList].find(c => c.startsWith('status-') && c !== 'status');
+    if (cur) setStatusEl(exportStatus, cur.replace('status-', ''));
+  }
+  const discoverEl = document.getElementById('discoverStatus');
+  if (discoverEl) setStatusEl(discoverEl, lastDiscoverStatus);
+}
+
+/* ── Conversation discovery / checkbox lists ── */
+
+async function loadSelections() {
+  try {
+    const r = await fetch('/panel/api/conversations/selected');
+    const d = await r.json();
+    selectedMap.scraper = new Set(d.scraper || []);
+    selectedMap.export = new Set(d.export || []);
+    selectedMap.schedule = new Set(d.schedule || []);
+  } catch {}
+}
+
+async function loadDiscoveredConvs() {
+  try {
+    const r = await fetch('/panel/api/conversations/refresh/status');
+    const d = await r.json();
+    discoveredConvs = d.items || [];
+    discoveredAt = d.discovered_at || 0;
+    lastDiscoverStatus = d.status || 'idle';
+    lastDiscoverMsg = d.message || '';
+    renderDiscoverMeta();
+    setStatusEl(document.getElementById('discoverStatus'), lastDiscoverStatus);
+    document.getElementById('refreshConvsBtn').disabled = lastDiscoverStatus === 'running';
+    document.getElementById('stopRefreshBtn').style.display = lastDiscoverStatus === 'running' ? '' : 'none';
+    renderAllConvLists();
+  } catch {}
+}
+
+function renderDiscoverMeta() {
+  const el = document.getElementById('discoverMeta');
+  if (!el) return;
+  const parts = [];
+  if (lastDiscoverMsg) parts.push(lastDiscoverMsg);
+  if (discoveredAt) parts.push(t('discoveredAt', new Date(discoveredAt * 1000).toLocaleString()));
+  el.textContent = parts.join(' · ');
+}
+
+function renderAllConvLists() {
+  ['scrape', 'schedule', 'export'].forEach(prefix => renderConvList(prefix));
+  renderConvCounts();
+}
+
+function sectionKey(prefix) {
+  // UI prefix -> backend section name
+  return prefix === 'scrape' ? 'scraper' : prefix;
+}
+
+function renderConvList(prefix) {
+  const box = document.getElementById(prefix + 'ConvList');
+  if (!box) return;
   box.innerHTML = '';
-  for (const f of customFilters) {
-    const chip = document.createElement('span');
-    chip.className = 'chip';
-    chip.innerHTML = f + ' <span class="remove" onclick="removeCustomFilter(\'' +
-      f.replace(/'/g, "\\'") + '\')">&times;</span>';
-    box.appendChild(chip);
+  if (discoveredConvs.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'conv-list-empty';
+    empty.textContent = t('noConvsDiscovered');
+    box.appendChild(empty);
+    return;
+  }
+  const selected = selectedMap[sectionKey(prefix)];
+  for (const conv of discoveredConvs) {
+    const key = conv.nickname || conv.name;
+    if (!key) continue;
+    const label = document.createElement('label');
+    label.className = 'conv-check';
+    label.title = key;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = key;
+    cb.checked = selected.has(key);
+    cb.onchange = () => onConvToggle(prefix, key, cb.checked);
+    const span = document.createElement('span');
+    span.textContent = key;
+    label.appendChild(cb);
+    label.appendChild(span);
+    box.appendChild(label);
   }
 }
 
-async function addCustomFilter() {
-  const input = document.getElementById('scrapeCustomInput');
-  const val = input.value.trim();
-  if (!val) return;
-  await fetch('/panel/api/custom-filter', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ action: 'add', value: val }),
+function renderConvCounts() {
+  ['scrape', 'schedule', 'export'].forEach(prefix => {
+    const el = document.getElementById(prefix + 'ConvCount');
+    if (!el) return;
+    el.textContent = t('convsCount', selectedMap[sectionKey(prefix)].size, discoveredConvs.length);
   });
-  input.value = '';
-  loadStatus();
 }
 
-async function removeCustomFilter(val) {
-  await fetch('/panel/api/custom-filter', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ action: 'remove', value: val }),
-  });
-  loadStatus();
+let saveTimers = {};
+function onConvToggle(prefix, key, checked) {
+  const section = sectionKey(prefix);
+  const set = selectedMap[section];
+  if (checked) set.add(key); else set.delete(key);
+  renderConvCounts();
+  // Debounced persist
+  clearTimeout(saveTimers[section]);
+  saveTimers[section] = setTimeout(() => persistSelection(section), 400);
+}
+
+async function persistSelection(section) {
+  try {
+    await fetch('/panel/api/conversations/selected', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ section, conversations: [...selectedMap[section]] }),
+    });
+  } catch {}
+}
+
+function selectAllConvs(prefix, checked) {
+  const section = sectionKey(prefix);
+  const set = selectedMap[section];
+  if (checked) {
+    for (const conv of discoveredConvs) {
+      const key = conv.nickname || conv.name;
+      if (key) set.add(key);
+    }
+  } else {
+    set.clear();
+  }
+  renderConvList(prefix);
+  renderConvCounts();
+  persistSelection(section);
+}
+
+async function refreshConvs() {
+  document.getElementById('refreshConvsBtn').disabled = true;
+  try {
+    const r = await fetch('/panel/api/conversations/refresh', { method: 'POST' });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      alert(d.error || 'Failed');
+      document.getElementById('refreshConvsBtn').disabled = false;
+      return;
+    }
+  } catch {
+    document.getElementById('refreshConvsBtn').disabled = false;
+    return;
+  }
+  // Poll status
+  const poll = async () => {
+    await loadDiscoveredConvs();
+    if (lastDiscoverStatus === 'running') {
+      setTimeout(poll, 1500);
+    }
+  };
+  poll();
+}
+
+async function stopRefreshConvs() {
+  await fetch('/panel/api/conversations/refresh/stop', { method: 'POST' });
+  loadDiscoveredConvs();
 }
 
 async function loadLog() {
@@ -1297,7 +1860,7 @@ async function loadLog() {
     const r = await fetch('/panel/api/scrape/log?lines=80');
     const d = await r.json();
     const box = document.getElementById('scrapeLog');
-    box.textContent = d.log || '(no output)';
+    box.textContent = d.log || t('noOutput');
     box.classList.add('show');
     box.scrollTop = box.scrollHeight;
   } catch {}
@@ -1305,12 +1868,12 @@ async function loadLog() {
 
 async function startScrape() {
   const incremental = document.getElementById('modeIncr').checked;
-  const filter = document.getElementById('scrapeFilter').value;
+  const conversations = [...selectedMap.scraper];
   document.getElementById('scrapeBtn').disabled = true;
   await fetch('/panel/api/scrape', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ incremental, filter }),
+    body: JSON.stringify({ incremental, conversations }),
   });
   loadStatus();
 }
@@ -1332,10 +1895,11 @@ async function updateSchedule() {
   const cron = ['cronMin','cronHour','cronDay','cronMonth','cronDow']
     .map(id => document.getElementById(id).value.trim() || '*').join(' ');
   const incremental = document.getElementById('modeIncr').checked;
+  const conversations = [...selectedMap.schedule];
   const r = await fetch('/panel/api/schedule', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ enabled, cron, incremental }),
+    body: JSON.stringify({ enabled, cron, incremental, conversations }),
   });
   const d = await r.json();
   if (d.error) {
@@ -1346,14 +1910,16 @@ async function updateSchedule() {
 
 async function startExport() {
   const format = document.getElementById('exportFormat').value;
-  const filter = document.getElementById('exportFilter').value;
+  const conversations = [...selectedMap.export];
+  if (conversations.length > 1 && !confirm(t('confirmMultiExport', conversations.length))) {
+    return;
+  }
   document.getElementById('exportBtn').disabled = true;
-  document.getElementById('exportStatus').textContent = 'running';
-  document.getElementById('exportStatus').className = 'status status-running';
+  setStatusEl(document.getElementById('exportStatus'), 'running');
   await fetch('/panel/api/export', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ format, filter }),
+    body: JSON.stringify({ format, conversations }),
   });
   loadStatus();
 }
@@ -1362,11 +1928,11 @@ async function startExport() {
 async function loadPasswordStatus() {
   const r = await fetch('/panel/api/password/status');
   const d = await r.json();
-  document.getElementById('pwStatus').textContent = d.has_password ? 'Password is set' : 'No password set (viewer is public)';
+  document.getElementById('pwStatus').textContent = d.has_password ? t('passwordIsSet') : t('noPasswordSet');
 }
 async function setPassword() {
   const pw = document.getElementById('pwInput').value;
-  if (!pw) { document.getElementById('pwStatus').textContent = 'Please enter a password'; return; }
+  if (!pw) { document.getElementById('pwStatus').textContent = t('passwordEmpty'); return; }
   const r = await fetch('/panel/api/password', {
     method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ password: pw }),
@@ -1390,24 +1956,24 @@ let loginPollTimer = null;
 async function checkLogin() {
   const ls = document.getElementById('loginStatus');
   const info = document.getElementById('loginInfo');
-  ls.textContent = 'checking...'; ls.className = 'status status-running';
+  ls.textContent = t('checking'); ls.className = 'status status-running';
   try {
     const r = await fetch('/panel/api/login/check');
     const d = await r.json();
     if (d.status === 'logged_in') {
-      ls.textContent = 'active'; ls.className = 'status status-completed';
-      info.textContent = 'Login session valid';
+      ls.textContent = t('completed'); ls.className = 'status status-completed';
+      info.textContent = t('loginActive');
     } else if (d.status === 'expired') {
-      ls.textContent = 'expired'; ls.className = 'status status-failed';
-      info.textContent = 'Session expired — click Scan QR Login';
+      ls.textContent = t('failed'); ls.className = 'status status-failed';
+      info.textContent = t('loginExpired');
     } else if (d.status === 'no_profile') {
-      ls.textContent = 'not logged in'; ls.className = 'status status-failed';
-      info.textContent = 'No login session — click Scan QR Login';
+      ls.textContent = t('failed'); ls.className = 'status status-failed';
+      info.textContent = t('loginNoProfile');
     } else {
       ls.textContent = d.status; ls.className = 'status status-idle';
       info.textContent = d.message || '';
     }
-  } catch { ls.textContent = 'error'; ls.className = 'status status-failed'; }
+  } catch { ls.textContent = t('error'); ls.className = 'status status-failed'; }
 }
 
 async function startLogin() {
@@ -1438,22 +2004,22 @@ async function pollLoginStatus() {
     const info = document.getElementById('loginInfo');
 
     if (d.status === 'waiting_scan') {
-      ls.textContent = 'waiting scan'; ls.className = 'status status-running';
+      ls.textContent = t('waitingScan'); ls.className = 'status status-running';
       info.textContent = d.message || '';
       if (d.screenshot) {
         document.getElementById('loginImg').src = 'data:image/png;base64,' + d.screenshot;
         document.getElementById('loginScreenshot').style.display = '';
       }
     } else if (d.status === 'logged_in') {
-      ls.textContent = 'active'; ls.className = 'status status-completed';
+      ls.textContent = t('completed'); ls.className = 'status status-completed';
       info.textContent = d.message;
       finishLogin();
     } else if (d.status === 'failed') {
-      ls.textContent = 'failed'; ls.className = 'status status-failed';
+      ls.textContent = t('failed'); ls.className = 'status status-failed';
       info.textContent = d.message;
       finishLogin();
     } else if (d.status === 'starting') {
-      ls.textContent = 'starting'; ls.className = 'status status-running';
+      ls.textContent = t('startingLogin'); ls.className = 'status status-running';
       info.textContent = d.message;
     }
   } catch {}
@@ -1535,11 +2101,11 @@ function sendLoginKey(key) {
 }
 
 async function clearLogin() {
-  if (!confirm('Clear login session? You will need to re-scan QR code.')) return;
+  if (!confirm(t('clearLoginConfirm'))) return;
   await fetch('/panel/api/login/clear', { method: 'POST' });
   const ls = document.getElementById('loginStatus');
-  ls.textContent = 'cleared'; ls.className = 'status status-idle';
-  document.getElementById('loginInfo').textContent = 'Session cleared';
+  ls.textContent = t('idle'); ls.className = 'status status-idle';
+  document.getElementById('loginInfo').textContent = t('sessionCleared');
 }
 
 /* ── Panel Auth ── */
@@ -1562,6 +2128,10 @@ async function panelAuthCheck() {
       document.getElementById('loginOverlay').style.display = 'none';
       document.getElementById('mainContainer').style.display = '';
       checkLogin();
+      // Load selections + discovered conv list before loadStatus so checkboxes
+      // can render with correct prior state.
+      await loadSelections();
+      await loadDiscoveredConvs();
       loadStatus();
       loadPasswordStatus();
       setInterval(loadStatus, 5000);
@@ -1591,10 +2161,10 @@ async function panelLogin() {
       document.getElementById('panelLoginErr').textContent = '';
       panelAuthCheck();
     } else {
-      document.getElementById('panelLoginErr').textContent = '密码错误';
+      document.getElementById('panelLoginErr').textContent = t('wrongPassword');
     }
   } catch(e) {
-    document.getElementById('panelLoginErr').textContent = '登录失败';
+    document.getElementById('panelLoginErr').textContent = t('loginFailed');
   }
 }
 
@@ -1613,6 +2183,7 @@ window.fetch = function(url, opts) {
   return _origFetch.call(this, url, opts);
 };
 
+applyI18n();
 panelAuthCheck();
 </script>
 </body>

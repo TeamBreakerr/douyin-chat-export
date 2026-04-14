@@ -19,6 +19,8 @@ def _parse_args():
 
     if "--discover" in sys.argv:
         args["mode"] = "discover"
+    elif "--list-conversations" in sys.argv:
+        args["mode"] = "list_conversations"
     elif "--export" in sys.argv:
         args["mode"] = "export"
 
@@ -77,6 +79,29 @@ async def run():
                 if arg.isdigit():
                     duration = int(arg)
             await scraper.run_discovery(duration=duration)
+        elif args["mode"] == "list_conversations":
+            convs = await scraper.list_conversations()
+            out_path = os.path.join(
+                os.path.dirname(__file__), "data", "conversations_list.json"
+            )
+            os.makedirs(os.path.dirname(out_path), exist_ok=True)
+            import json as _json
+            import time as _time
+            payload = {
+                "discovered_at": int(_time.time()),
+                "items": [
+                    {
+                        "nickname": c.get("nickname", ""),
+                        "name": c.get("name", ""),
+                        "time": c.get("time", ""),
+                        "preview": c.get("preview", ""),
+                    }
+                    for c in convs
+                ],
+            }
+            with open(out_path, "w", encoding="utf-8") as f:
+                _json.dump(payload, f, ensure_ascii=False, indent=2)
+            print(f"[+] 会话列表已写入 {out_path}")
         else:
             await scraper.extract_all()
 
