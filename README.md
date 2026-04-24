@@ -15,6 +15,16 @@
 - **控制面板**：Web 管理面板，可视化控制采集、导出、定时任务，支持远程扫码登录
 - **Docker 部署**：支持 Docker 一键部署，含前端、后端、采集器
 
+## 环境要求
+
+| 依赖 | 版本要求 | 说明 |
+|------|----------|------|
+| Python | >= 3.10 | 后端服务与采集器 |
+| Node.js | >= 20.19 或 >= 22.12 | 前端构建（Vite 7 要求） |
+| Docker | >= 20.10（可选） | Docker 部署时需要，会自动处理上述依赖 |
+
+> **Docker 用户**：无需手动安装 Python 和 Node.js，容器内已包含所有依赖，直接看方式二。
+
 ## 部署方式
 
 ### 方式一：本地运行
@@ -24,7 +34,7 @@
 git clone https://github.com/TeamBreakerr/douyin-chat-export.git
 cd douyin-chat-export
 
-# 创建虚拟环境
+# 创建 Python 虚拟环境
 python3 -m venv venv
 source venv/bin/activate          # macOS / Linux
 # venv\Scripts\activate           # Windows PowerShell
@@ -33,7 +43,7 @@ source venv/bin/activate          # macOS / Linux
 pip install -r requirements.txt
 playwright install chromium
 
-# 安装前端依赖并构建
+# 构建前端（需要 Node.js >= 20.19 或 >= 22.12）
 cd frontend
 npm install
 npm run build
@@ -45,7 +55,27 @@ python3 -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 
 访问 `http://localhost:8000` 查看聊天记录，`http://localhost:8000/panel` 打开控制面板。
 
-### 方式二：Docker 部署
+<details>
+<summary>Node.js 版本不对？</summary>
+
+Vite 7 要求 Node.js **20.19+** 或 **22.12+**。如果版本不满足，推荐用 [nvm](https://github.com/nvm-sh/nvm) 管理：
+
+```bash
+# 安装 nvm（已有可跳过）
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+
+# 安装并使用 Node.js 22
+nvm install 22
+nvm use 22
+node -v  # 确认 >= 22.12
+```
+
+Windows 用户可使用 [nvm-windows](https://github.com/coreybutler/nvm-windows) 或直接从 [Node.js 官网](https://nodejs.org/) 下载 LTS 版本。
+</details>
+
+### 方式二：Docker 部署（推荐）
+
+无需安装 Python / Node.js，Docker 会自动处理所有依赖：
 
 ```bash
 git clone https://github.com/TeamBreakerr/douyin-chat-export.git
