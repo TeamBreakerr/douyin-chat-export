@@ -236,7 +236,8 @@ class WebChatScraper:
                 await self.page.wait_for_selector(SEL_CONV_ITEM, timeout=20000)
                 print(f"[+] 当前页面: {self.page.url}")
                 return
-            except Exception:
+            except Exception as e:
+                await self._dump_chat_page_diagnostics(reason=str(e)[:80])
                 if attempt < 2:
                     print(f"[!] 等待会话列表超时，第 {attempt+1} 次重试...")
                     await asyncio.sleep(3)
@@ -245,6 +246,76 @@ class WebChatScraper:
 
         await asyncio.sleep(1)
         print(f"[+] 当前页面: {self.page.url}")
+
+    async def _dump_chat_page_diagnostics(self, reason: str = ""):
+        """打印当前 chat 页的诊断信息，用于排查 selector 命中失败的原因。"""
+        try:
+            diag = await self.page.evaluate("""() => {
+                const out = {
+                    url: location.href,
+                    title: document.title,
+                    pathname: location.pathname,
+                    has_conv_store: !!window.conversationStore,
+                    has_user_store: !!window.userInfoStore,
+                    has_im_module: !!window['__VMOK_@pc-im/im:1.0.0.562__'] ||
+                                   Object.keys(window).some(k => k.includes('pc-im')),
+                    list_wrappers: document.querySelectorAll('div[class*="conversationConversationListwrapper"]').length,
+                    item_wrappers: document.querySelectorAll('div[class*="conversationConversationItemwrapper"]').length,
+                    body_text_first200: (document.body && document.body.innerText || '').slice(0, 200),
+                };
+                // Detect login wall / captcha
+                out.has_qr = !!document.querySelector('img[src*="qrcode"], canvas[class*="qrcode"], div[class*="qrcode"], div[class*="QrCode"]');
+                out.has_captcha = !!document.querySelector('iframe[src*="captcha"], div[class*="captcha"], div[class*="verify"]');
+                out.has_login_btn = !!document.querySelector('button[class*="login"], div[class*="login-button"]');
+                // Top-level classes of body's first ~10 children to spot rename
+                const top = [];
+                if (document.body) {
+                    for (const c of document.body.children) {
+                        if (top.length >= 10) break;
+                        top.push((c.className || '').toString().split(/\\s+/).slice(0, 3).join(' '));
+                    }
+                }
+                out.body_top_children_classes = top;
+                // Sample any class names that look related so we can spot a rename
+                const related = new Set();
+                document.querySelectorAll('div[class]').forEach(el => {
+                    const cls = el.className;
+                    if (typeof cls !== 'string') return;
+                    for (const c of cls.split(/\\s+/)) {
+                        const lc = c.toLowerCase();
+                        if (lc.includes('conversation') || lc.includes('chatlist') || lc.includes('messagelist')) {
+                            related.add(c);
+                        }
+                    }
+                });
+                out.related_classes = [...related].slice(0, 25);
+                return out;
+            }""")
+        except Exception as e:
+            print(f"[!] 诊断失败: {e}")
+            return
+
+        if reason:
+            print(f"[!] 会话列表未找到 (原因: {reason})")
+        print(f"[*] URL: {diag.get('url')}")
+        print(f"[*] 标题: {diag.get('title')}")
+        print(f"[*] conversationStore={diag.get('has_conv_store')} userInfoStore={diag.get('has_user_store')} IM SDK={diag.get('has_im_module')}")
+        print(f"[*] DOM 命中: list={diag.get('list_wrappers')} item={diag.get('item_wrappers')}")
+        if diag.get("has_qr"):
+            print("[!] 页面有二维码 → 登录态实际无效，请重新扫码或导入新 Cookie")
+        if diag.get("has_captcha"):
+            print("[!] 页面有验证码/滑块 → 触发了风控，需要人工通过")
+        if diag.get("has_login_btn"):
+            print("[!] 页面有登录按钮 → 大概率未登录")
+        if not diag.get("has_conv_store") and not diag.get("has_im_module"):
+            print("[!] IM SDK 完全未加载 → 可能账号无 PC IM 权限，或 JS chunk 被拦截")
+        related = diag.get("related_classes") or []
+        if related and diag.get("item_wrappers", 0) == 0:
+            print(f"[*] 相关类名: {', '.join(related)}")
+            print("[*] 如果出现 conversationItemwrapper 之类的新名字，可能是抖音改了类名")
+        snippet = (diag.get("body_text_first200") or "").replace("\n", " ").strip()
+        if snippet:
+            print(f"[*] 正文片段: {snippet}")
 
     # ── Time Parsing ──────────────────────────────────────────────
 
