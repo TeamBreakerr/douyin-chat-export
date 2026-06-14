@@ -29,14 +29,26 @@ async def main():
     )
 
     page = context.pages[0] if context.pages else await context.new_page()
-    await page.goto(DOUYIN_URL, wait_until="domcontentloaded")
+    # Douyin's heavy JS / bot-detection can stall "domcontentloaded" well past
+    # 30s even though the page is already usable for scanning. Wait only for the
+    # navigation to commit, and don't let a slow load abort the login flow — the
+    # QR UI renders client-side and the cookie poll below gives it 5 minutes.
+    try:
+        await page.goto(DOUYIN_URL, wait_until="commit", timeout=60000)
+    except Exception as e:
+        print(f"[!] 页面加载较慢，继续等待登录: {e}")
 
     print("[*] 等待登录... (登录成功后自动关闭)")
     for _ in range(300):  # 5 min timeout
-        logged_in = await page.evaluate(
-            "() => document.cookie.includes('sessionid')"
-        )
-        if logged_in:
+        # Read the cookie jar instead of document.cookie: sessionid is httpOnly
+        # (invisible to document.cookie) and context.cookies() also survives the
+        # page navigations that destroy the JS execution context mid-poll.
+        try:
+            cookies = await context.cookies()
+        except Exception:
+            await asyncio.sleep(1)
+            continue
+        if any(c.get("name") == "sessionid" for c in cookies):
             print("[+] 登录成功！")
             break
         await asyncio.sleep(1)
