@@ -219,11 +219,7 @@
       </div>
     </template>
 
-    <!-- Lightbox -->
-    <div v-if="lightboxSrc" class="lightbox-overlay" @click.self="closeLightbox">
-      <img class="lightbox-img" :src="lightboxSrc" @click.self="closeLightbox" />
-      <button class="lightbox-close" @click="closeLightbox">×</button>
-    </div>
+    <MessageLightbox v-model="lightboxSrc" />
   </div>
 </template>
 
@@ -231,6 +227,7 @@
 import { ref, reactive, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { highlightText as _highlightText } from '@/lib/highlight'
 import { resolveAvatarUrl } from '@/lib/media'
+import MessageLightbox from './MessageLightbox.vue'
 import {
   clearCjCache, getContentJson, tryParseJson, tryParseShareContent, extractShareTitle,
   isJsonSystemMsg, isJsonSticker, getStickerUrl, shouldShow, renderSystemMsg,
@@ -386,15 +383,10 @@ function selectSystemContent(e) {
 // 高亮的消息 ID
 const highlightMsgId = ref(null)
 
-// Lightbox state
+// Lightbox state (the overlay + ESC handling live in MessageLightbox)
 const lightboxSrc = ref(null)
 function openLightbox(src) {
-  if (!src) return
-  lightboxSrc.value = src
-}
-function closeLightbox() { lightboxSrc.value = null }
-function onLightboxKey(e) {
-  if (e.key === 'Escape') closeLightbox()
+  if (src) lightboxSrc.value = src
 }
 
 async function jumpToRefMsg(ref) {
@@ -585,13 +577,11 @@ onMounted(() => {
     }
   }
   tryBind()
-  window.addEventListener('keydown', onLightboxKey)
 })
 onUnmounted(() => {
   if (listRef.value) {
     listRef.value.removeEventListener('scroll', onListScroll)
   }
-  window.removeEventListener('keydown', onLightboxKey)
 })
 
 function formatTime(ts) {
@@ -1134,33 +1124,6 @@ watch(() => props.jumpToSeq, async (seq) => {
   padding: 2px 6px;
   border-radius: 3px;
 }
-
-/* Lightbox */
-.lightbox-overlay {
-  position: fixed; inset: 0; z-index: 9999;
-  background: rgba(0, 0, 0, 0.85);
-  display: flex; align-items: center; justify-content: center;
-  cursor: zoom-out;
-  animation: lightboxIn 0.15s ease-out;
-}
-@keyframes lightboxIn { from { opacity: 0; } to { opacity: 1; } }
-.lightbox-img {
-  max-width: 92vw; max-height: 92vh;
-  object-fit: contain;
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-  border-radius: 4px;
-  cursor: zoom-out;
-}
-.lightbox-close {
-  position: absolute; top: 20px; right: 28px;
-  width: 40px; height: 40px;
-  background: rgba(255, 255, 255, 0.1);
-  border: none; border-radius: 50%;
-  color: #fff; font-size: 28px; line-height: 1;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.lightbox-close:hover { background: rgba(255, 255, 255, 0.2); }
 
 .msg-time {
   font-size: 11px;
