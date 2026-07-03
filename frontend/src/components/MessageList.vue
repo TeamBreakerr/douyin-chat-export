@@ -46,7 +46,7 @@
         <div v-if="hasMore && !loading && atLatest" class="msg-load-more" @click="loadMore">
           ⬆ 加载更早消息
         </div>
-        <template v-for="msg in messages" :key="msg.msg_id">
+        <template v-for="(msg, index) in messages" :key="msg.msg_id">
         <div
           v-if="shouldShow(msg)"
           class="msg-item"
@@ -55,6 +55,8 @@
             'msg-self': isSelf(msg),
             'msg-system': (msg.msg_type === 0 && !isVoiceMsg(msg)) || isJsonSystemMsg(msg),
             'msg-highlight': highlightMsgId === msg.msg_id,
+            'group-start': isGroupStart(index),
+            'msg-grouped': !isGroupStart(index),
           }"
         >
           <!-- 系统消息居中显示 -->
@@ -275,6 +277,22 @@ function getContentJson(msg) {
 function isSelf(msg) {
   if (!selfUid.value) return false
   return msg.sender_uid === selfUid.value
+}
+
+function _isSystem(msg) {
+  return (msg.msg_type === 0 && !isVoiceMsg(msg)) || isJsonSystemMsg(msg)
+}
+
+// A message starts a new visual group unless it continues the previous
+// message's sender within a short window. Grouped messages hide the repeated
+// avatar + name and sit tighter. System messages always break a group.
+function isGroupStart(index) {
+  if (index <= 0) return true
+  const cur = messages.value[index]
+  const prev = messages.value[index - 1]
+  if (!prev || _isSystem(cur) || _isSystem(prev)) return true
+  if (prev.sender_uid !== cur.sender_uid) return true
+  return Math.abs((cur.timestamp || 0) - (prev.timestamp || 0)) > 300  // >5 min
 }
 
 function displayName(msg) {
@@ -1139,9 +1157,20 @@ watch(() => props.jumpToSeq, async (seq) => {
 .msg-item {
   display: flex;
   gap: 10px;
-  margin-bottom: 14px;
+  margin-bottom: 3px;
   max-width: 74%;
   transition: background 0.3s;
+}
+/* first message of a sender group gets breathing room above it */
+.msg-item.group-start {
+  margin-top: 14px;
+}
+/* continuation messages hide the repeated avatar + name and sit tight */
+.msg-item.msg-grouped .msg-avatar {
+  visibility: hidden;
+}
+.msg-item.msg-grouped .msg-sender {
+  display: none;
 }
 .msg-item.msg-highlight {
   background: color-mix(in srgb, var(--highlight) 22%, transparent);
