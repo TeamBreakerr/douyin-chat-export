@@ -1116,10 +1116,10 @@ watch(() => props.jumpToSeq, async (seq) => {
 }
 .msg-system-text {
   font-size: 12px;
-  color: var(--text-muted);
-  background: var(--bg-tertiary);
-  padding: 4px 12px;
-  border-radius: 10px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  padding: 4px 14px;
+  border-radius: 999px;
   text-align: center;
 }
 .msg-system-ref {
@@ -1157,17 +1157,17 @@ watch(() => props.jumpToSeq, async (seq) => {
 .msg-item {
   display: flex;
   gap: 10px;
-  margin-bottom: 12px;
-  max-width: 75%;
+  margin-bottom: 14px;
+  max-width: 74%;
   transition: background 0.3s;
 }
 .msg-item.msg-highlight {
-  background: rgba(255, 200, 50, 0.2);
-  border-radius: 8px;
+  background: color-mix(in srgb, var(--highlight) 22%, transparent);
+  border-radius: var(--radius);
   animation: highlight-fade 2s ease-out;
 }
 @keyframes highlight-fade {
-  0% { background: rgba(255, 200, 50, 0.4); }
+  0% { background: color-mix(in srgb, var(--highlight) 40%, transparent); }
   100% { background: transparent; }
 }
 .msg-item.msg-self {
@@ -1218,18 +1218,22 @@ watch(() => props.jumpToSeq, async (seq) => {
 
 .msg-bubble {
   background: var(--bg-message-other);
-  padding: 8px 12px;
-  border-radius: 10px;
-  border-top-left-radius: 2px;
+  padding: 9px 13px;
+  border-radius: var(--bubble-radius);
+  border-top-left-radius: 4px;
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.55;
   word-break: break-word;
   white-space: pre-wrap;
+  box-shadow: var(--shadow-sm);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 .msg-item.msg-self .msg-bubble {
   background: var(--bg-message-self);
-  border-top-left-radius: 10px;
-  border-top-right-radius: 2px;
+  color: #fff;
+  border: none;
+  border-top-left-radius: var(--bubble-radius);
+  border-top-right-radius: 4px;
 }
 
 /* 分享卡片 */

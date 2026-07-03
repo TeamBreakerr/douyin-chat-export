@@ -190,22 +190,23 @@ onMounted(() => {
 .conv-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 14px;
+  gap: 11px;
+  padding: 11px 14px;
   cursor: pointer;
-  transition: background 0.15s;
+  border-left: 3px solid transparent;
+  transition: background 0.15s, border-color 0.15s;
 }
 .conv-item:hover {
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 .conv-item.active {
-  background: var(--bg-tertiary);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
   border-left: 3px solid var(--accent);
 }
 
 .conv-avatar {
-  width: 40px;
-  height: 40px;
+  width: 42px;
+  height: 42px;
   border-radius: 50%;
   background: var(--bg-tertiary);
   display: flex;
@@ -214,7 +215,7 @@ onMounted(() => {
   font-size: 16px;
   font-weight: 600;
   flex-shrink: 0;
-  color: var(--accent);
+  color: var(--text-secondary);
   overflow: hidden;
 }
 .conv-avatar img {

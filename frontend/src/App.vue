@@ -256,16 +256,28 @@ function navigateToMessage(item) {
   display: flex;
   align-items: center;
   gap: 16px;
-  padding: 10px 20px;
+  padding: 11px 20px;
   background: var(--bg-secondary);
   border-bottom: 1px solid var(--border-color);
 }
 
 .app-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 15px;
   font-weight: 600;
   white-space: nowrap;
-  color: var(--accent);
+  color: var(--text-primary);
+  letter-spacing: 0.01em;
+}
+.app-title::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 20%, transparent);
 }
 
 .app-toolbar .search-container {
@@ -281,21 +293,22 @@ function navigateToMessage(item) {
 }
 
 .theme-btn {
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
-  border: 2px solid transparent;
+  border: 1px solid rgba(255, 255, 255, 0.15);
   cursor: pointer;
-  transition: transform 0.15s, border-color 0.15s;
+  transition: transform 0.15s, box-shadow 0.15s;
+  padding: 0;
 }
 
 .theme-btn:hover {
-  transform: scale(1.2);
+  transform: scale(1.15);
 }
 
 .theme-btn.active {
-  border-color: var(--accent);
-  transform: scale(1.15);
+  transform: scale(1.1);
+  box-shadow: 0 0 0 2px var(--bg-secondary), 0 0 0 4px var(--accent);
 }
 
 .sidebar-toggle {

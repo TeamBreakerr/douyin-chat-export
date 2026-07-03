@@ -5,20 +5,27 @@
 }
 
 :root {
-  --bg-primary: #1a1a2e;
-  --bg-secondary: #16213e;
-  --bg-tertiary: #0f3460;
-  --bg-message-self: #2d5aa0;
-  --bg-message-other: #2a2a3e;
-  --text-primary: #e0e0e0;
-  --text-secondary: #a0a0b0;
-  --text-muted: #707080;
-  --border-color: #2a2a3e;
-  --accent: #e94560;
-  --accent-hover: #ff6b81;
-  --highlight: #ffd700;
-  --scrollbar-thumb: #3a3a5e;
+  /* 默认：精修暗色 —— 干净的中性冷调深底 + 克制的单一珊瑚强调色 */
+  --bg-primary: #0f1014;
+  --bg-secondary: #15171e;
+  --bg-tertiary: #21242e;
+  --bg-message-self: linear-gradient(180deg, #f2596f 0%, #e34a60 100%);
+  --bg-message-other: #1e212a;
+  --text-primary: #e9eaf0;
+  --text-secondary: #9a9daa;
+  --text-muted: #656875;
+  --border-color: #23262f;
+  --accent: #f2586e;
+  --accent-hover: #ff7488;
+  --highlight: #ffd36b;
+  --scrollbar-thumb: #2c3040;
   --scrollbar-track: transparent;
+
+  /* 共享设计 token（各主题通过 color-mix 自动取自各自的 --accent） */
+  --radius: 12px;
+  --bubble-radius: 14px;
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-pop: 0 16px 44px rgba(0, 0, 0, 0.5);
 }
 
 /* 皮肤：微信绿 */
@@ -99,6 +106,9 @@ body {
   color: var(--text-primary);
   height: 100vh;
   overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 #app {
