@@ -30,6 +30,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
 
 # Application source
 COPY extract.py export.py scheduler.py ./
+COPY common/ common/
 COPY extractor/ extractor/
 COPY backend/ backend/
 COPY docker-entrypoint.sh .
