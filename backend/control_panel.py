@@ -10,6 +10,9 @@ from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
 from pydantic import BaseModel
 
 from backend import database
+from common import config as _cfg, paths
+from backend.panel import notify as _notify
+from backend.panel.scheduler import parse_cron as _parse_cron, next_cron_run as _next_cron_run
 
 control_router = APIRouter(prefix="/panel")
 
@@ -19,31 +22,14 @@ _PANEL_HTML_PATH = os.path.join(os.path.dirname(__file__), "panel", "static", "p
 with open(_PANEL_HTML_PATH, encoding="utf-8") as _f:
     PANEL_HTML = _f.read()
 
-# ── Persistent config (saved to data/panel_config.json) ──
-_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "panel_config.json")
 
-
+# ── Persistent config (data/panel_config.json) — implemented in common.config ──
 def _load_config():
-    if os.path.exists(_CONFIG_PATH):
-        try:
-            with open(_CONFIG_PATH, encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            # Don't let a corrupted config file block service startup —
-            # fall back to defaults and let the next save overwrite it.
-            print(f"[!] panel_config.json 损坏 ({e})，使用默认配置")
-            return {"custom_filters": [], "schedule": ""}
-    return {"custom_filters": [], "schedule": ""}
+    return _cfg.load_config()
 
 
 def _save_config(cfg):
-    os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
-    # Atomic write: serialize to tmp file then rename, so a crash mid-write
-    # (e.g. UnicodeEncodeError on Windows gbk) can't leave a half-written file.
-    tmp_path = _CONFIG_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(cfg, f, ensure_ascii=False)
-    os.replace(tmp_path, _CONFIG_PATH)
+    _cfg.save_config(cfg)
 
 
 # ── Scrape job state ──
@@ -103,9 +89,9 @@ _video_backfill_state = {
     "finished_at": None,
 }
 
-LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "scrape.log")
-DISCOVER_LOG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "discover.log")
-CONV_LIST_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "conversations_list.json")
+LOG_PATH = paths.SCRAPE_LOG
+DISCOVER_LOG_PATH = paths.DISCOVER_LOG
+CONV_LIST_PATH = paths.CONVERSATIONS_LIST
 
 
 async def restore_schedule_on_startup():
@@ -193,62 +179,10 @@ class NotifyKeyRequest(BaseModel):
     sendkey: str = ""  # empty = remove
 
 
-def _send_serverchan_sync(sendkey: str, title: str, desp: str) -> tuple[bool, str]:
-    """Blocking POST to Server酱. Returns (ok, message)."""
-    import urllib.request
-    import urllib.parse
-
-    url = f"https://sctapi.ftqq.com/{sendkey}.send"
-    data = urllib.parse.urlencode({"title": title, "desp": desp}).encode("utf-8")
-    req = urllib.request.Request(url, data=data, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-            try:
-                payload = json.loads(body)
-                # Server酱 turbo returns {"code":0,...}; legacy returns {"errno":0,...}
-                code = payload.get("code", payload.get("errno", -1))
-                if code == 0:
-                    return True, "已发送"
-                return False, f"Server酱返回错误: {payload.get('message') or body[:200]}"
-            except json.JSONDecodeError:
-                return False, f"Server酱响应非 JSON: {body[:200]}"
-    except Exception as e:
-        return False, f"请求失败: {e}"
-
-
-def _build_failure_desp(reason: str, log_path: str | None = None, tail: int = 20) -> str:
-    """Markdown body for failure notifications: timestamp, reason, last N log lines."""
-    import datetime
-    ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    parts = [
-        f"**失败时间**: {ts}",
-        f"**原因**: {reason or '未知错误'}",
-    ]
-    if log_path and os.path.exists(log_path):
-        try:
-            with open(log_path, "r", encoding="utf-8", errors="replace") as f:
-                lines = f.readlines()
-            log_excerpt = "".join(lines[-tail:]).rstrip()
-            if log_excerpt:
-                parts.append("**日志末尾**:\n```\n" + log_excerpt + "\n```")
-        except Exception:
-            pass
-    return "\n\n".join(parts)
-
-
-async def _notify_on_failure(title: str, desp: str) -> None:
-    """Fire-and-forget notification. Reads sendkey from config; silently no-ops if not set."""
-    cfg = _load_config()
-    sendkey = (cfg.get("notify_serverchan_key") or "").strip()
-    if not sendkey:
-        return
-    try:
-        ok, msg = await asyncio.to_thread(_send_serverchan_sync, sendkey, title, desp)
-        if not ok:
-            print(f"[!] 通知发送失败: {msg}")
-    except Exception as e:
-        print(f"[!] 通知发送异常: {e}")
+# Server酱 notification helpers live in backend/panel/notify.py.
+_send_serverchan_sync = _notify.send_serverchan_sync
+_build_failure_desp = _notify.build_failure_desp
+_notify_on_failure = _notify.notify_on_failure
 
 
 @control_router.post("/api/notify/serverchan")
@@ -862,79 +796,7 @@ async def set_schedule(req: ScheduleRequest):
     return {"status": "disabled"}
 
 
-def _parse_cron(expr: str) -> list | None:
-    """Parse a 5-field cron expression. Returns list of 5 sets or None."""
-    fields = expr.strip().split()
-    if len(fields) != 5:
-        return None
-    ranges = [
-        (0, 59),   # minute
-        (0, 23),   # hour
-        (1, 31),   # day of month
-        (1, 12),   # month
-        (0, 6),    # day of week (0=Sun)
-    ]
-    result = []
-    for field, (lo, hi) in zip(fields, ranges):
-        try:
-            values = _expand_cron_field(field, lo, hi)
-            if not values:
-                return None
-            result.append(values)
-        except Exception:
-            return None
-    return result
-
-
-def _expand_cron_field(field: str, lo: int, hi: int) -> set:
-    """Expand a single cron field like '*/5', '1,3,5', '0-12', '*'."""
-    values = set()
-    for part in field.split(","):
-        if "/" in part:
-            base, step = part.split("/", 1)
-            step = int(step)
-            if base == "*":
-                start = lo
-            elif "-" in base:
-                start = int(base.split("-")[0])
-            else:
-                start = int(base)
-            for v in range(start, hi + 1, step):
-                if lo <= v <= hi:
-                    values.add(v)
-        elif "-" in part:
-            a, b = part.split("-", 1)
-            for v in range(int(a), int(b) + 1):
-                if lo <= v <= hi:
-                    values.add(v)
-        elif part == "*":
-            values.update(range(lo, hi + 1))
-        else:
-            v = int(part)
-            if lo <= v <= hi:
-                values.add(v)
-    return values
-
-
-def _next_cron_run(parsed: list) -> float:
-    """Find next datetime matching the cron fields."""
-    from datetime import datetime, timedelta
-    now = datetime.now().replace(second=0, microsecond=0) + timedelta(minutes=1)
-    minutes, hours, days, months, dow = parsed
-    # Search up to 366 days ahead
-    for _ in range(366 * 24 * 60):
-        if (now.month in months and now.day in days and
-                now.hour in hours and now.minute in minutes and
-                now.weekday() in _convert_dow(dow)):
-            return now.timestamp()
-        now += timedelta(minutes=1)
-    return time.time() + 86400  # fallback: 1 day
-
-
-def _convert_dow(cron_dow: set) -> set:
-    """Convert cron day-of-week (0=Sun) to Python weekday (0=Mon)."""
-    mapping = {0: 6, 1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5}
-    return {mapping.get(d, d) for d in cron_dow}
+# Cron parsing (_parse_cron / _next_cron_run) lives in backend/panel/scheduler.py.
 
 
 async def _cron_loop(parsed: list, incremental: bool):
@@ -1090,7 +952,7 @@ async def download_export():
 
 import base64
 
-_USER_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "browser_profile")
+_USER_DATA_DIR = paths.BROWSER_PROFILE
 
 _login_state = {
     "status": "idle",  # idle | starting | waiting_scan | logged_in | failed
