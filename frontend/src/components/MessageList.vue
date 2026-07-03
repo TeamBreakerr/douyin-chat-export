@@ -231,6 +231,14 @@
 import { ref, reactive, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { highlightText as _highlightText } from '@/lib/highlight'
 import { resolveAvatarUrl } from '@/lib/media'
+import {
+  clearCjCache, getContentJson, tryParseJson, tryParseShareContent, extractShareTitle,
+  isJsonSystemMsg, isJsonSticker, getStickerUrl, shouldShow, renderSystemMsg,
+  extractServerMsgIds, isVideoComment, isJsonShare, getShareInfo, getInlinePic,
+  isVideoMsg, hasLocalVideo, isJsonVideo, getVideoPoster, getVideoDuration,
+  getImageSrc, getEmojiSrc, isRecalled, isVoiceMsg, getVoiceUrl, getVoiceDuration,
+  getRefMsg, getRefContent, getRefNickname,
+} from '@/lib/douyinMessage'
 
 const props = defineProps({
   conversation: Object,
@@ -254,25 +262,8 @@ const showPicker = ref(false)
 const userCache = reactive({})
 
 // content_json 解析缓存
-const cjCache = new Map()
-
 // 系统消息引用的分享视频缓存 { msg_id: { title, cover, itemId } }
 const sysRefCache = reactive({})
-
-function getContentJson(msg) {
-  if (cjCache.has(msg.msg_id)) return cjCache.get(msg.msg_id)
-  let cj = null
-  try {
-    if (msg.raw_data) {
-      const raw = typeof msg.raw_data === 'string' ? JSON.parse(msg.raw_data) : msg.raw_data
-      if (raw.content_json) {
-        cj = typeof raw.content_json === 'string' ? JSON.parse(raw.content_json) : raw.content_json
-      }
-    }
-  } catch {}
-  cjCache.set(msg.msg_id, cj)
-  return cj
-}
 
 function isSelf(msg) {
   if (!selfUid.value) return false
@@ -339,87 +330,6 @@ function pickSelf(uid) {
   showPicker.value = false
 }
 
-// msg_type=1 但实际是系统提示消息（JSON 含 tips，但不是贴纸消息）
-function isJsonSystemMsg(msg) {
-  if (msg.msg_type !== 1) return false
-  if (!msg.content || !msg.content.startsWith('{')) return false
-  if (isJsonSticker(msg)) return false  // 贴纸优先
-  return msg.content.includes('"tips"') && msg.content.includes('"aweType"')
-}
-
-// msg_type=1 但实际是贴纸/表情 JSON（content 可能被截断，也检查 content_json）
-function isJsonSticker(msg) {
-  if (msg.msg_type !== 1) return false
-  if (!msg.content || !msg.content.startsWith('{')) return false
-  // 先检查 content
-  if (msg.content.includes('"stickers"') || msg.content.includes('"joker_stickers"')) return true
-  // content 被截断时，检查 content_json
-  const cj = getContentJson(msg)
-  if (cj && (cj.stickers || cj.joker_stickers)) return true
-  return false
-}
-
-function getStickerUrl(msg) {
-  // 优先用完整的 content_json
-  const cj = getContentJson(msg)
-  const source = cj || tryParseShareContent(msg.content)
-  if (!source) return null
-  // stickers 类型
-  if (source.stickers?.length > 0) {
-    return source.stickers[0].static_url?.url_list?.[0] || null
-  }
-  // joker_stickers 类型
-  if (source.joker_stickers?.length > 0) {
-    return source.joker_stickers[0].static_url?.url_list?.[0] || null
-  }
-  return null
-}
-
-// 是否显示此消息
-function shouldShow(msg) {
-  if (msg.msg_type === 0) return !!renderSystemMsg(msg)
-  if (isJsonSystemMsg(msg)) return !!renderSystemMsg(msg)
-  return true
-}
-
-// 系统消息：解析模板（优先用 content_json，因为 content 可能被截断）
-function renderSystemMsg(msg) {
-  const cj = getContentJson(msg)
-  const source = cj || tryParseJson(msg.content)
-  if (!source) {
-    return (msg.content && msg.content !== '{}') ? msg.content : ''
-  }
-  if (source.tips) {
-    let text = source.tips
-    if (source.template) {
-      for (const t of source.template) {
-        text = text.replace(`{{${t.key}}}`, t.name || '')
-      }
-    }
-    return text
-  }
-  // hint_text（贴纸消息附带的提示文本）
-  if (source.hint_text) return source.hint_text
-  // 空对象 {} 或无有效文本 → 隐藏
-  if (Object.keys(source).length <= 1) return ''
-  return (msg.content && msg.content !== '{}') ? msg.content : ''
-}
-
-// 从原始 JSON 字符串中提取 server_message_id（避免 JSON.parse 丢失大整数精度）
-function extractServerMsgIds(msg) {
-  const ids = []
-  try {
-    const raw = typeof msg.raw_data === 'string' ? msg.raw_data : JSON.stringify(msg.raw_data)
-    // raw_data 中 JSON 转义后形如 server_message_id\":12345 或 server_message_id":12345
-    const re = /server_message_id\\?"?\s*:\s*(\d{15,})/g
-    let match
-    while ((match = re.exec(raw)) !== null) {
-      ids.push(match[1])
-    }
-  } catch {}
-  return ids
-}
-
 // 系统消息引用的视频：异步加载分享消息的标题和封面
 async function loadSysRefs(msgList) {
   for (const msg of msgList) {
@@ -443,132 +353,6 @@ async function loadSysRefs(msgList) {
 
 function openVideoById(itemId) {
   if (itemId) window.open(`https://www.douyin.com/video/${itemId}`, '_blank')
-}
-
-function tryParseJson(str) {
-  if (!str || !str.startsWith('{')) return null
-  try { return JSON.parse(str) } catch { return null }
-}
-
-// 判断是否为评论引用视频消息（aweType=700 + related_share_video）
-function isVideoComment(msg) {
-  const cj = getContentJson(msg)
-  if (!cj) return false
-  return cj.aweType === 700 && !!cj.related_share_video?.itemId
-}
-
-// 判断 msg_type=1 的消息是否实际上是分享卡片（JSON content 含 content_title）
-function isJsonShare(msg) {
-  if (msg.msg_type === 4) return false
-  if (!msg.content || !msg.content.startsWith('{')) return false
-  // 快速检查关键字段
-  return msg.content.includes('content_title') || msg.content.includes('cover_url')
-}
-
-// 分享卡片信息提取
-function getShareInfo(msg) {
-  // 优先从 content_json (raw_data) 提取
-  const cj = getContentJson(msg)
-  const source = cj || tryParseShareContent(msg.content)
-  if (!source) return { title: '', author: '', cover: '', itemId: '', productUrl: '', comment: '', commentUser: '' }
-
-  // 商品卡片 (aweType=11029): 从 im_dynamic_patch.raw_data 提取
-  const patch = source.im_dynamic_patch
-  if (patch?.raw_data) {
-    try {
-      const pr = typeof patch.raw_data === 'string' ? JSON.parse(patch.raw_data) : patch.raw_data
-      const title = pr.content_top?.content || extractShareTitle(msg.content) || ''
-      const cover = pr.top?.content || ''
-      let productUrl = ''
-      const actions = pr.whole_card?.action_info
-      if (actions?.[0]?.params?.schema) {
-        const m = actions[0].params.schema.match(/commodity_id=(\d+)/)
-        if (m) productUrl = 'https://www.douyin.com/product/' + m[1]
-      }
-      return { title, author: '', cover, itemId: '', productUrl, comment: '', commentUser: '', commentImg: '' }
-    } catch {}
-  }
-
-  // aweType=10500: 引用视频评论 (comment 字段)
-  // aweType=700: 引用视频评论 (text 字段)
-  const comment = source.comment || source.text || ''
-  const commentUser = source.comment_user_name || ''
-  const commentImg = source.comment_url?.url_list?.[0] || ''
-  const relatedVideo = source.related_share_video || {}
-  return {
-    title: source.content_title || source.aweme_title || extractShareTitle(msg.content) || '',
-    author: source.content_name || '',
-    cover: source.cover_url?.url_list?.[0] || '',
-    itemId: source.itemId || relatedVideo.itemId || '',
-    productUrl: '',
-    comment,
-    commentUser,
-    commentImg,
-  }
-}
-
-function tryParseShareContent(content) {
-  if (!content || !content.startsWith('{')) return null
-  try {
-    const obj = JSON.parse(content)
-    if (obj.content_title || obj.cover_url) return obj
-  } catch {}
-  return null
-}
-
-function extractShareTitle(content) {
-  if (!content) return ''
-  // "分享[商品]: 商品名称" / "分享[视频]: 标题" / "[分享视频]标题"
-  const m = content.match(/^(?:分享\[.+?\][:：]\s*|^\[分享视频\])(.+)/s)
-  return m ? m[1].trim() : ''
-}
-
-// 图片 inline_pic base64 fallback
-function getInlinePic(msg) {
-  const cj = getContentJson(msg)
-  if (cj?.inline_pic) {
-    return 'data:image/webp;base64,' + cj.inline_pic.replace(/\r?\n/g, '')
-  }
-  return null
-}
-
-// 是否是视频消息（msg_type=3 但本地是 mp4 —— 实际视频文件已落地）
-function isVideoMsg(msg) {
-  return msg.media_local_path && /\.mp4$/i.test(msg.media_local_path)
-}
-
-// 是否是 JSON 视频消息（msg_type=5 新分类，或老数据 msg_type=1 带 cj.video.vid）
-// 这类只有 poster 封面图，没有真正的视频文件（vid→URL 反查 TODO）
-function isJsonVideo(msg) {
-  if (msg.msg_type === 5) return true
-  if (msg.msg_type !== 1) return false
-  const cj = getContentJson(msg)
-  return !!(cj && cj.video && cj.video.vid)
-}
-
-// 本地是否有 .mp4 视频文件可播（与 isVideoMsg 同一判定）
-const hasLocalVideo = isVideoMsg
-
-// 视频封面：优先 inline_pic（仅做缩略图）；本地路径若是 .mp4 则是视频本体，不当封面用
-function getVideoPoster(msg) {
-  // inline_pic 是 base64 WebP 缩略图，在 cj 里
-  return getInlinePic(msg)
-}
-
-// 视频时长（秒）
-function getVideoDuration(msg) {
-  const cj = getContentJson(msg)
-  const d = cj?.duration
-  if (d === undefined || d === null) return ''
-  const n = typeof d === 'string' ? parseFloat(d) : Number(d)
-  if (!n || isNaN(n)) return ''
-  return Math.round(n) + '″'
-}
-
-// 图片源：本地大图 > inline_pic 缩略图（视频走单独分支）
-function getImageSrc(msg) {
-  if (msg.media_local_path && !isVideoMsg(msg)) return '/media/' + msg.media_local_path
-  return getInlinePic(msg)
 }
 
 // 右键消息体 → 全选其内容（让浏览器原生右键菜单的"复制"直接生效）
@@ -597,94 +381,6 @@ function selectSystemContent(e) {
   const sel = window.getSelection()
   sel.removeAllRanges()
   sel.addRange(range)
-}
-
-// 表情源：本地 > CDN URL
-function getEmojiSrc(msg) {
-  if (msg.media_local_path) return '/media/' + msg.media_local_path
-  return msg.media_url || null
-}
-
-// 撤回消息检测
-function isRecalled(msg) {
-  const cj = getContentJson(msg)
-  if (cj?.is_recalled) return true
-  if (!msg.raw_data) return false
-  try {
-    const raw = typeof msg.raw_data === 'string' ? JSON.parse(msg.raw_data) : msg.raw_data
-    return !!raw.is_recalled
-  } catch { return false }
-}
-
-// 语音消息检测
-function isVoiceMsg(msg) {
-  const cj = getContentJson(msg)
-  if (cj?.resource_url?.url_list?.length) return true
-  // 也检查 content 字段
-  if (msg.content?.startsWith('{') && msg.content.includes('resource_url')) {
-    try { const o = JSON.parse(msg.content); return !!o.resource_url?.url_list?.length } catch {}
-  }
-  return false
-}
-
-function getVoiceUrl(msg) {
-  const cj = getContentJson(msg)
-  // Guard JSON.parse: malformed content that merely starts with '{' must not
-  // throw during render (matches getVoiceDuration below).
-  const source = cj || (msg.content?.startsWith('{') ? (() => { try { return JSON.parse(msg.content) } catch { return null } })() : null)
-  if (!source?.resource_url?.url_list?.length) return ''
-  // 优先使用本地路径
-  if (msg.media_local_path) return `/media/${msg.media_local_path}`
-  return source.resource_url.url_list[0]
-}
-
-function getVoiceDuration(msg) {
-  const cj = getContentJson(msg)
-  const source = cj || (msg.content?.startsWith('{') ? (() => { try { return JSON.parse(msg.content) } catch { return null } })() : null)
-  if (!source?.duration) return '?'
-  return Math.round(source.duration / 1000)
-}
-
-// 回复/引用消息解析
-function getRefMsg(msg) {
-  if (!msg.ref_msg) return null
-  try {
-    const ref = typeof msg.ref_msg === 'string' ? JSON.parse(msg.ref_msg) : msg.ref_msg
-    // 新格式（field 18）：有 content 和 nickname
-    if (ref.content || ref.nickname) return ref
-    // 旧格式：有 server_id 或 content_json
-    if (ref.server_id && String(ref.server_id).length >= 15) return ref
-    if (ref.content_json) return ref
-  } catch {}
-  return null
-}
-
-function getRefContent(ref) {
-  if (!ref) return ''
-  // 新格式（field 18）：直接使用 content 字段
-  if (ref.content) return ref.content
-  // 旧格式：从 refmsg_content 或 content_json 解析
-  if (ref.refmsg_content) {
-    try {
-      const cj = JSON.parse(ref.refmsg_content)
-      if (cj.text) return cj.text
-    } catch {}
-  }
-  if (ref.content_json) {
-    try {
-      const cj = JSON.parse(ref.content_json)
-      if (cj.text) return cj.text
-      if (cj.content_title) return `[分享] ${cj.content_title}`
-      if (cj.aweType === 501 || cj.aweType === 507) return '[表情]'
-    } catch {}
-    if (!ref.content_json.startsWith('{')) return ref.content_json
-  }
-  return '[消息]'
-}
-
-function getRefNickname(ref) {
-  if (!ref) return ''
-  return ref.nickname || ''
 }
 
 // 高亮的消息 ID
@@ -722,7 +418,7 @@ async function jumpToRefMsg(ref) {
     if (!msg.seq) return
     const targetSeq = Math.max(0, msg.seq - 50)
     messages.value = []
-    cjCache.clear()
+    clearCjCache()
     loading.value = true
     const url = `/api/conversations/${props.conversation.conv_id}/messages?page_size=100&after_seq=${targetSeq}`
     const res2 = await fetch(url)
@@ -787,7 +483,7 @@ async function fetchMessages(convId, beforeSeq = null, afterSeq = null) {
   loading.value = false
 
   // 清理缓存
-  cjCache.clear()
+  clearCjCache()
 
   scrollLocked = true
   if (beforeSeq === null && afterSeq === null) {
@@ -920,7 +616,7 @@ function onImgError(e) {
 watch(() => props.conversation, (conv) => {
   if (conv) {
     messages.value = []
-    cjCache.clear()
+    clearCjCache()
     fetchSenders(conv.conv_id)
     // 如果有 jumpToSeq，由 jumpToSeq watcher 处理加载
     if (!props.jumpToSeq) {
@@ -932,7 +628,7 @@ watch(() => props.conversation, (conv) => {
 watch(() => props.jumpToSeq, async (seq) => {
   if (seq && props.conversation) {
     messages.value = []
-    cjCache.clear()
+    clearCjCache()
     const targetSeq = Math.max(0, seq - 50)
     await fetchMessages(props.conversation.conv_id, null, targetSeq)
     await nextTick()
