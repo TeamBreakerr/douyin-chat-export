@@ -617,7 +617,9 @@ function isVoiceMsg(msg) {
 
 function getVoiceUrl(msg) {
   const cj = getContentJson(msg)
-  const source = cj || (msg.content?.startsWith('{') ? JSON.parse(msg.content) : null)
+  // Guard JSON.parse: malformed content that merely starts with '{' must not
+  // throw during render (matches getVoiceDuration below).
+  const source = cj || (msg.content?.startsWith('{') ? (() => { try { return JSON.parse(msg.content) } catch { return null } })() : null)
   if (!source?.resource_url?.url_list?.length) return ''
   // 优先使用本地路径
   if (msg.media_local_path) return `/media/${msg.media_local_path}`
@@ -758,8 +760,18 @@ async function fetchMessages(convId, beforeSeq = null, afterSeq = null) {
   let url = `/api/conversations/${convId}/messages?page_size=100`
   if (beforeSeq !== null) url += `&before_seq=${beforeSeq}`
   if (afterSeq !== null) url += `&after_seq=${afterSeq}`
-  const res = await fetch(url)
-  const data = await res.json()
+  let data
+  try {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    data = await res.json()
+  } catch (e) {
+    // Don't leave the spinner (and scroll lock) stuck forever on a failed load.
+    loading.value = false
+    scrollLocked = false
+    console.error('加载消息失败', e)
+    return
+  }
   loading.value = false
 
   // 清理缓存
@@ -835,6 +847,7 @@ function onListScroll() {
   if (scrollDebounce || scrollLocked) return
   const list = listRef.value
   if (!list || loading.value || !hasMore.value) return
+  if (!props.conversation) return  // scroll event after the conversation was cleared
   const threshold = 100
   // 滚到顶部附近 → 加载更早消息
   if (list.scrollTop < threshold) {
