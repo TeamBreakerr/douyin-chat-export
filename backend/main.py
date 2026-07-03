@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 
 from . import database
+from common import config, paths
 
 app = FastAPI(title="抖音聊天记录浏览器", version="1.0.0")
 
@@ -22,20 +23,13 @@ app.add_middleware(
 )
 
 # ── Auth system ──
-_CONFIG_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "panel_config.json")
 _active_tokens: dict[str, float] = {}  # token -> expire_timestamp
 _TOKEN_TTL = 7 * 24 * 3600  # 7 days
 
 
 def _get_password_hash() -> str | None:
     """Read password hash from config."""
-    import json
-    try:
-        with open(_CONFIG_PATH, encoding="utf-8") as f:
-            cfg = json.load(f)
-        return cfg.get("password_hash") or None
-    except (FileNotFoundError, json.JSONDecodeError, UnicodeDecodeError):
-        return None
+    return config.get_password_hash()
 
 
 def _hash_password(pw: str) -> str:
@@ -113,7 +107,7 @@ def auth_login(req: AuthLoginRequest):
     return {"token": token}
 
 # Serve media files
-media_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "media")
+media_dir = paths.MEDIA_DIR
 os.makedirs(media_dir, exist_ok=True)
 app.mount("/media", StaticFiles(directory=media_dir), name="media")
 
@@ -222,7 +216,7 @@ async def startup():
     await restore_schedule_on_startup()
 
 # Serve Vue frontend (must be last)
-_frontend_dist = os.path.join(os.path.dirname(os.path.dirname(__file__)), "frontend", "dist")
+_frontend_dist = paths.FRONTEND_DIST
 if os.path.isdir(_frontend_dist):
     app.mount("/assets", StaticFiles(directory=os.path.join(_frontend_dist, "assets")), name="assets")
 

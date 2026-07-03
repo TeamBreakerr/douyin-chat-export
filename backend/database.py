@@ -1,15 +1,14 @@
-"""Database access layer for the web backend."""
-import sqlite3
-import json
-import os
+"""Database access layer for the web backend (read + delete queries).
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "chat.db")
+The connection factory and schema live in `common.db`; the reader uses
+`connect()` with foreign keys OFF (its two-step delete relies on no cascade).
+"""
+from common.db import connect
+from common.paths import DB_PATH  # re-exported for backward compatibility
 
 
 def get_db():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return connect()
 
 
 def get_conversations(search=None, page=1, page_size=50):

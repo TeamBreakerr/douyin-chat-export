@@ -17,14 +17,14 @@ if _REPO_ROOT not in sys.path:
 
 @pytest.fixture
 def temp_db(tmp_path, monkeypatch):
-    """Create an isolated chat.db with the real schema and repoint every module
-    that hardcodes DB_PATH at it. Returns the path to the temp DB."""
+    """Create an isolated chat.db with the real schema and repoint the single
+    source of truth (common.paths.DB_PATH) at it. Both the reader (backend) and
+    writer (extractor) resolve the path from there at call time."""
+    import common.paths as paths
     import extractor.models as models
-    import backend.database as database
 
     db_path = str(tmp_path / "chat.db")
-    monkeypatch.setattr(models, "DB_PATH", db_path)
-    monkeypatch.setattr(database, "DB_PATH", db_path)
+    monkeypatch.setattr(paths, "DB_PATH", db_path)
     models.init_db()
     return db_path
 
