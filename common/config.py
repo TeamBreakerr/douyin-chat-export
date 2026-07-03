@@ -10,21 +10,25 @@ import os
 
 from common import paths
 
-_DEFAULTS = {"custom_filters": [], "schedule": ""}
+def _defaults() -> dict:
+    # A fresh dict (with a fresh list) each call, so callers that mutate the
+    # returned config in place can't pollute a shared default.
+    return {"custom_filters": [], "schedule": ""}
 
 
 def load_config() -> dict:
-    path = paths.CONFIG_PATH
-    if os.path.exists(path):
-        try:
-            with open(path, encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, UnicodeDecodeError) as e:
-            # Don't let a corrupted config file block service startup —
-            # fall back to defaults and let the next save overwrite it.
-            print(f"[!] panel_config.json 损坏 ({e})，使用默认配置")
-            return dict(_DEFAULTS)
-    return dict(_DEFAULTS)
+    # Open-and-catch (no os.path.exists pre-check) so a file deleted mid-call
+    # can't raise FileNotFoundError out to the auth path as an HTTP 500.
+    try:
+        with open(paths.CONFIG_PATH, encoding="utf-8") as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return _defaults()  # no config yet — normal, stay silent
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        # Don't let a corrupted config file block service startup —
+        # fall back to defaults and let the next save overwrite it.
+        print(f"[!] panel_config.json 损坏 ({e})，使用默认配置")
+        return _defaults()
 
 
 def save_config(cfg: dict) -> None:

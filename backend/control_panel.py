@@ -271,14 +271,16 @@ async def _run_backfill():
     - 表情 (msg_type=2): 直接下载 media_url
     - 图片 (msg_type=3): 从 raw_data 取 origin_url + skey，AES-GCM 解密后保存
     """
-    from extractor.web_scraper import _save_emoji, _save_image
-    from backend.database import get_db
-
     _backfill_state.update({
         "status": "running", "total": 0, "done": 0, "ok": 0, "failed": 0,
         "message": "扫描数据库...", "started_at": time.time(), "finished_at": None,
     })
     try:
+        # Imports inside try: a failed import (e.g. playwright missing) must set
+        # status='failed', not leave it stuck at 'running' (409 on every retry).
+        from extractor.web_scraper import _save_emoji, _save_image
+        from backend.database import get_db
+
         media_root = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "media")
         img_dir = os.path.join(media_root, "images")
         emoji_dir = os.path.join(media_root, "emoji")
@@ -377,7 +379,6 @@ async def video_backfill_start():
 
 
 async def _run_video_backfill():
-    from extractor.video_downloader import backfill as run_backfill
     _video_backfill_state.update({
         "status": "running", "total": 0, "done": 0, "ok": 0, "failed": 0,
         "skipped": 0, "message": "启动浏览器解析视频 URL...",
@@ -399,6 +400,8 @@ async def _run_video_backfill():
         )
 
     try:
+        # Import inside try so a failed import sets status='failed', not stuck 'running'.
+        from extractor.video_downloader import backfill as run_backfill
         result = await run_backfill(progress_cb=_cb)
         _video_backfill_state["status"] = "completed"
         _video_backfill_state["message"] = (
@@ -479,7 +482,6 @@ async def start_scrape(req: ScrapeRequest):
         cmd.append("--download-images")
 
     _scrape_state["status"] = "running"
-    _scrape_state["stopped"] = False
     _scrape_state["started_at"] = time.time()
     _scrape_state["finished_at"] = None
     _scrape_state["message"] = f"{'增量' if req.incremental else '全量'}采集"
@@ -499,6 +501,10 @@ async def start_scrape(req: ScrapeRequest):
 
 
 async def _run_scrape(cmd):
+    # Reset here (not in start_scrape) so BOTH the manual and cron paths clear a
+    # prior manual-stop flag; otherwise a scheduled scrape after a manual Stop
+    # would be mislabeled '已停止' and its failure notification suppressed.
+    _scrape_state["stopped"] = False
     try:
         os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
         with open(LOG_PATH, "w") as log_file:
