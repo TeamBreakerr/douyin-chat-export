@@ -1,0 +1,1621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
+<title>Control Panel - 抖音聊天记录</title>
+<style>
+/* ── Theme variables ── */
+[data-theme="dark"] {
+  --bg:       #0d1117;
+  --bg2:      #161b22;
+  --bg3:      #21262d;
+  --surface:  #1c2128;
+  --accent:   #58a6ff;
+  --accent2:  #79c0ff;
+  --accent-bg:rgba(56,139,253,0.1);
+  --text:     #c9d1d9;
+  --text2:    #8b949e;
+  --text3:    #6e7681;
+  --border:   #30363d;
+  --green:    #3fb950;
+  --green-bg: rgba(63,185,80,0.12);
+  --red:      #f85149;
+  --red-bg:   rgba(248,81,73,0.12);
+  --yellow:   #d29922;
+  --yellow-bg:rgba(210,153,34,0.12);
+  --shadow:   0 1px 3px rgba(0,0,0,0.3);
+}
+[data-theme="light"] {
+  --bg:       #f6f8fa;
+  --bg2:      #ffffff;
+  --bg3:      #f0f2f5;
+  --surface:  #ffffff;
+  --accent:   #0969da;
+  --accent2:  #0550ae;
+  --accent-bg:rgba(9,105,218,0.08);
+  --text:     #24292f;
+  --text2:    #57606a;
+  --text3:    #8c959f;
+  --border:   #d0d7de;
+  --green:    #1a7f37;
+  --green-bg: rgba(26,127,55,0.08);
+  --red:      #cf222e;
+  --red-bg:   rgba(207,34,46,0.08);
+  --yellow:   #9a6700;
+  --yellow-bg:rgba(154,103,0,0.08);
+  --shadow:   0 1px 3px rgba(31,35,40,0.08);
+}
+[data-theme="ocean"] {
+  --bg:       #0b1929;
+  --bg2:      #0f2744;
+  --bg3:      #163561;
+  --surface:  #122a4b;
+  --accent:   #5eb1ef;
+  --accent2:  #90caf9;
+  --accent-bg:rgba(94,177,239,0.1);
+  --text:     #d4e4f7;
+  --text2:    #8eacc5;
+  --text3:    #5d7d96;
+  --border:   #1e3a5f;
+  --green:    #4caf50;
+  --green-bg: rgba(76,175,80,0.12);
+  --red:      #ef5350;
+  --red-bg:   rgba(239,83,80,0.12);
+  --yellow:   #ffa726;
+  --yellow-bg:rgba(255,167,38,0.12);
+  --shadow:   0 1px 3px rgba(0,0,0,0.4);
+}
+[data-theme="purple"] {
+  --bg:       #13111c;
+  --bg2:      #1c1828;
+  --bg3:      #2a2438;
+  --surface:  #211c30;
+  --accent:   #bb86fc;
+  --accent2:  #d4b0ff;
+  --accent-bg:rgba(187,134,252,0.1);
+  --text:     #e2daf0;
+  --text2:    #9e8fba;
+  --text3:    #6e5f8a;
+  --border:   #332d44;
+  --green:    #66bb6a;
+  --green-bg: rgba(102,187,106,0.12);
+  --red:      #ef5350;
+  --red-bg:   rgba(239,83,80,0.12);
+  --yellow:   #ffc107;
+  --yellow-bg:rgba(255,193,7,0.12);
+  --shadow:   0 1px 3px rgba(0,0,0,0.4);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+  transition: background 0.3s, color 0.3s;
+}
+.container { max-width: 860px; margin: 0 auto; padding: 32px 20px; }
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 28px;
+}
+.header h1 {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.3px;
+}
+.header-right { display: flex; align-items: center; gap: 12px; }
+
+/* Theme switcher */
+.theme-switcher {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+  background: var(--bg3);
+  border-radius: 8px;
+  border: 1px solid var(--border);
+}
+.theme-dot {
+  width: 22px; height: 22px;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+.theme-dot:hover { transform: scale(1.15); }
+.theme-dot.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
+.theme-dot[data-t="dark"]   { background: #0d1117; }
+.theme-dot[data-t="light"]  { background: #f6f8fa; border-color: #d0d7de; }
+.theme-dot[data-t="light"].active { border-color: #0969da; }
+.theme-dot[data-t="ocean"]  { background: linear-gradient(135deg, #0b1929, #163561); }
+.theme-dot[data-t="purple"] { background: linear-gradient(135deg, #13111c, #2a2438); }
+
+.viewer-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 500;
+  color: var(--accent); background: var(--accent-bg); border: 1px solid var(--border);
+  text-decoration: none; transition: all 0.15s;
+}
+.viewer-btn:hover { background: var(--accent); color: #fff; }
+
+/* ── Stats cards ── */
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
+.card {
+  background: var(--bg2); border-radius: 12px; padding: 20px;
+  text-align: center; border: 1px solid var(--border);
+  box-shadow: var(--shadow); transition: transform 0.15s, box-shadow 0.15s;
+}
+.card:hover { transform: translateY(-2px); box-shadow: var(--shadow), 0 4px 12px rgba(0,0,0,0.1); }
+.card .num {
+  font-size: 30px; font-weight: 700; color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+.card .label { font-size: 12px; color: var(--text2); margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* ── Sections ── */
+.section {
+  background: var(--bg2); border-radius: 12px; padding: 22px;
+  margin-bottom: 16px; border: 1px solid var(--border); box-shadow: var(--shadow);
+}
+.section h2 {
+  font-size: 14px; font-weight: 600; margin-bottom: 14px;
+  display: flex; align-items: center; gap: 10px;
+  text-transform: uppercase; letter-spacing: 0.3px; color: var(--text2);
+}
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.row + .row { margin-top: 10px; }
+
+/* ── Form controls ── */
+select, input[type=text] {
+  background: var(--bg3); border: 1px solid var(--border); color: var(--text);
+  padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+
+.btn {
+  padding: 8px 18px; border: none; border-radius: 8px; font-size: 13px;
+  cursor: pointer; font-weight: 500; transition: all 0.15s;
+  display: inline-flex; align-items: center; gap: 6px;
+}
+.btn-primary { background: var(--accent); color: #fff; }
+.btn-primary:hover { filter: brightness(1.1); }
+.btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+.btn-danger { background: var(--red); color: #fff; }
+.btn-danger:hover { filter: brightness(1.1); }
+.btn-success { background: var(--green); color: #fff; text-decoration: none; }
+.btn-success:hover { filter: brightness(1.1); }
+.btn-outline {
+  background: transparent; color: var(--text2); border: 1px solid var(--border);
+}
+.btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
+
+/* ── Status badge ── */
+.status {
+  display: inline-flex; align-items: center; gap: 5px;
+  padding: 3px 10px; border-radius: 20px; font-size: 11px;
+  font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.status::before {
+  content: ''; width: 6px; height: 6px; border-radius: 50%;
+}
+.status-idle { background: var(--bg3); color: var(--text3); }
+.status-idle::before { background: var(--text3); }
+.status-running { background: var(--yellow-bg); color: var(--yellow); }
+.status-running::before { background: var(--yellow); animation: pulse 1.5s infinite; }
+.status-completed { background: var(--green-bg); color: var(--green); }
+.status-completed::before { background: var(--green); }
+.status-failed { background: var(--red-bg); color: var(--red); }
+.status-failed::before { background: var(--red); }
+
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+/* ── Log box ── */
+.log-box {
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  padding: 12px; margin-top: 14px; max-height: 220px; overflow-y: auto;
+  font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  font-size: 12px; line-height: 1.6; color: var(--text2);
+  white-space: pre-wrap; word-break: break-all; display: none;
+}
+.log-box.show { display: block; }
+.log-box::-webkit-scrollbar { width: 6px; }
+.log-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── Meta info ── */
+.meta { font-size: 12px; color: var(--text3); margin-top: 8px; }
+
+/* ── Custom filter chips ── */
+.chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 3px 10px; border-radius: 20px; font-size: 12px;
+  background: var(--accent-bg); color: var(--accent); border: 1px solid var(--border);
+}
+.chip .remove {
+  cursor: pointer; opacity: 0.6; font-size: 14px; line-height: 1;
+  margin-left: 2px;
+}
+.chip .remove:hover { opacity: 1; color: var(--red); }
+
+/* ── Cookie import ── */
+.cookie-import-area {
+  display: none; margin-top: 14px; padding: 16px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+}
+.cookie-import-area.show { display: block; }
+.cookie-import-area textarea {
+  width: 100%; min-height: 100px; background: var(--bg3);
+  border: 1px solid var(--border); color: var(--text);
+  padding: 10px 12px; border-radius: 8px;
+  font-family: 'SF Mono','Cascadia Code','Consolas',monospace;
+  font-size: 12px; line-height: 1.5; resize: vertical;
+  outline: none; box-sizing: border-box;
+}
+.cookie-import-area textarea:focus {
+  border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg);
+}
+.cookie-import-hint {
+  font-size: 12px; color: var(--text3); line-height: 1.7; margin-bottom: 10px;
+}
+.cookie-import-hint ol { padding-left: 18px; margin: 6px 0; }
+.cookie-import-hint code {
+  background: var(--bg3); padding: 1px 5px; border-radius: 3px;
+  font-size: 11px; font-family: 'SF Mono','Cascadia Code','Consolas',monospace;
+}
+.cookie-import-feedback { margin-top: 8px; font-size: 12px; min-height: 18px; }
+.cookie-import-feedback.success { color: var(--green); }
+.cookie-import-feedback.error { color: var(--red); }
+
+/* Inline error banner (replaces alert popups) */
+.inline-error {
+  margin-top: 10px;
+  padding: 8px 12px;
+  background: var(--accent-bg);
+  border: 1px solid var(--red);
+  color: var(--red);
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+/* ── Schedule section ── */
+.schedule-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.schedule-row input[type=text] { width: 80px; text-align: center; }
+.cron-preset {
+  font-size: 11px; color: var(--accent); cursor: pointer;
+  padding: 2px 8px; border-radius: 4px; background: var(--accent-bg);
+  border: 1px solid var(--border); transition: all 0.15s;
+}
+.cron-preset:hover { background: var(--accent); color: #fff; }
+
+/* ── Conversation checkbox list ── */
+.conv-list-box {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 6px 10px;
+  max-height: 220px; overflow-y: auto;
+  padding: 10px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  margin-top: 8px;
+}
+.conv-list-box::-webkit-scrollbar { width: 6px; }
+.conv-list-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.conv-check {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; color: var(--text); cursor: pointer;
+  padding: 3px 4px; border-radius: 4px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.conv-check:hover { background: var(--bg3); }
+.conv-check input[type=checkbox] {
+  accent-color: var(--accent); cursor: pointer; flex-shrink: 0;
+}
+.conv-list-empty {
+  padding: 14px; text-align: center; font-size: 12px;
+  color: var(--text3);
+  grid-column: 1 / -1;
+}
+.conv-list-toolbar {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  font-size: 12px; color: var(--text2);
+}
+.conv-list-toolbar .sep { color: var(--text3); }
+
+/* ── Language switcher ── */
+.lang-switcher {
+  display: inline-flex; gap: 2px;
+  padding: 3px; background: var(--bg3);
+  border-radius: 8px; border: 1px solid var(--border);
+  font-size: 12px;
+}
+.lang-switcher button {
+  background: transparent; border: none; color: var(--text2);
+  padding: 3px 10px; border-radius: 5px; cursor: pointer;
+  font-size: 12px; font-weight: 500;
+}
+.lang-switcher button.active {
+  background: var(--accent); color: #fff;
+}
+
+.switch {
+  position: relative; width: 38px; height: 22px; cursor: pointer;
+}
+.switch input { display: none; }
+.switch .slider {
+  position: absolute; inset: 0; background: var(--bg3); border-radius: 22px;
+  border: 1px solid var(--border); transition: all 0.2s;
+}
+.switch .slider::before {
+  content: ''; position: absolute; left: 2px; top: 2px;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--text3); transition: all 0.2s;
+}
+.switch input:checked + .slider { background: var(--accent-bg); border-color: var(--accent); }
+.switch input:checked + .slider::before { transform: translateX(16px); background: var(--accent); }
+
+/* ── Toggle (incr/full) ── */
+.toggle {
+  display: flex; border-radius: 8px; overflow: hidden;
+  border: 1px solid var(--border); background: var(--bg3);
+}
+.toggle label {
+  padding: 7px 16px; font-size: 12px; cursor: pointer;
+  transition: all 0.15s; color: var(--text2); font-weight: 500;
+}
+.toggle input { display: none; }
+.toggle input:checked + label { background: var(--accent); color: #fff; }
+
+/* ── Responsive ── */
+@media (max-width: 600px) {
+  .container { padding: 16px 12px; }
+  .cards { grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .card { padding: 14px 8px; }
+  .card .num { font-size: 22px; }
+  .header { flex-wrap: wrap; gap: 10px; }
+}
+</style>
+</head>
+<body data-theme="dark">
+<div id="loginOverlay" style="display:none;position:fixed;inset:0;z-index:9999;background:var(--bg);display:flex;align-items:center;justify-content:center;">
+  <div style="background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:32px;width:320px;box-shadow:var(--shadow);text-align:center;">
+    <h2 style="margin:0 0 8px;color:var(--text);" data-i18n="panelTitle">控制面板</h2>
+    <p style="margin:0 0 20px;color:var(--text2);font-size:14px;" data-i18n="enterPasswordPrompt">请输入密码</p>
+    <input id="panelPwInput" type="password" data-i18n-placeholder="password" placeholder="密码" onkeydown="if(event.key==='Enter')panelLogin()"
+      style="width:100%;box-sizing:border-box;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:15px;margin-bottom:12px;outline:none;">
+    <button onclick="panelLogin()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:15px;cursor:pointer;" data-i18n="loginBtn">登录</button>
+    <div id="panelLoginErr" style="margin-top:10px;color:var(--red);font-size:13px;"></div>
+  </div>
+</div>
+<div class="container" id="mainContainer" style="display:none;">
+
+  <!-- Header -->
+  <div class="header">
+    <h1 data-i18n="appTitle">抖音聊天记录导出</h1>
+    <div class="header-right">
+      <div class="lang-switcher">
+        <button data-lang="zh" onclick="setLang('zh')">中</button>
+        <button data-lang="en" onclick="setLang('en')">EN</button>
+      </div>
+      <div class="theme-switcher">
+        <div class="theme-dot active" data-t="dark" title="Dark" onclick="setTheme('dark')"></div>
+        <div class="theme-dot" data-t="light" title="Light" onclick="setTheme('light')"></div>
+        <div class="theme-dot" data-t="ocean" title="Ocean" onclick="setTheme('ocean')"></div>
+        <div class="theme-dot" data-t="purple" title="Purple" onclick="setTheme('purple')"></div>
+      </div>
+      <a href="/" class="viewer-btn" data-i18n="chatViewer">聊天查看器 &rarr;</a>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="cards">
+    <div class="card"><div class="num" id="convCount">-</div><div class="label" data-i18n="statConversations">会话</div></div>
+    <div class="card"><div class="num" id="msgCount">-</div><div class="label" data-i18n="statMessages">消息</div></div>
+    <div class="card"><div class="num" id="userCount">-</div><div class="label" data-i18n="statUsers">用户</div></div>
+  </div>
+
+  <!-- Login -->
+  <div class="section" id="loginSection">
+    <h2><span data-i18n="loginTitle">登录</span> <span class="status status-idle" id="loginStatus" data-i18n="checking">检测中...</span></h2>
+    <div id="loginInfo" class="meta" style="margin-bottom:10px"></div>
+    <div class="row">
+      <button class="btn btn-primary" id="loginBtn" onclick="startLogin()" data-i18n="scanQr">扫码登录</button>
+      <button class="btn btn-danger" id="loginCancelBtn" onclick="cancelLogin()" style="display:none" data-i18n="cancel">取消</button>
+      <button class="btn btn-primary" onclick="toggleCookieImport()" data-i18n="importCookie">导入 Cookie</button>
+      <button class="btn btn-outline btn-sm" onclick="clearLogin()" data-i18n="clearSession">清除会话</button>
+    </div>
+    <div id="cookieImportArea" class="cookie-import-area">
+      <div class="cookie-import-hint" id="cookieImportHint"></div>
+      <textarea id="cookieInput" data-i18n-placeholder="cookiePlaceholder" placeholder="粘贴 Cookie 内容..."></textarea>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn btn-primary btn-sm" id="cookieImportBtn" onclick="importCookie()" data-i18n="importBtn">导入</button>
+        <button class="btn btn-outline btn-sm" onclick="toggleCookieImport()" data-i18n="cancel">取消</button>
+      </div>
+      <div class="cookie-import-feedback" id="cookieImportFeedback"></div>
+    </div>
+    <div id="loginScreenshot" style="display:none;margin-top:14px;position:relative;user-select:none;">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:6px;" data-i18n="clickScreenshotHint">点击截图进行交互。下方输入文本后回车发送。</div>
+      <div style="text-align:center;">
+        <img id="loginImg" style="max-width:100%;border-radius:8px;border:1px solid var(--border);cursor:crosshair;"
+             onmousedown="imgMouseDown(event)" onmousemove="imgMouseMove(event)" onmouseup="imgMouseUp(event)"
+             ondragstart="return false" />
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;align-items:center;">
+        <input type="text" id="loginKeyInput" data-i18n-placeholder="typeAndEnter" placeholder="输入文字后回车发送..."
+               style="flex:1;" onkeydown="loginKeyDown(event)" autocomplete="off" />
+        <button class="btn btn-outline btn-sm" onclick="sendLoginKey('Backspace')">⌫</button>
+        <button class="btn btn-outline btn-sm" onclick="sendLoginKey('Tab')">Tab</button>
+        <button class="btn btn-outline btn-sm" onclick="sendLoginKey('Enter')">Enter</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Conversations (shared source of truth for the checkbox lists below) -->
+  <div class="section">
+    <h2><span data-i18n="convListTitle">会话列表</span> <span class="status status-idle" id="discoverStatus" data-i18n="idle">闲置</span></h2>
+    <div class="row">
+      <button class="btn btn-primary" id="refreshConvsBtn" onclick="refreshConvs()" data-i18n="refreshConvList">刷新会话列表</button>
+      <button class="btn btn-danger" id="stopRefreshBtn" onclick="stopRefreshConvs()" style="display:none" data-i18n="cancel">取消</button>
+      <span class="meta" id="discoverMeta"></span>
+    </div>
+    <div id="refreshError" class="inline-error" style="display:none;"></div>
+    <div class="meta" id="discoverHint" style="margin-top:6px;" data-i18n="convListHint">点击"刷新会话列表"从抖音加载全部会话，然后在下方采集/导出/定时各节勾选需要处理的会话。</div>
+    <div class="log-box" id="discoverLog"></div>
+  </div>
+
+  <!-- Scraper -->
+  <div class="section">
+    <h2><span data-i18n="scraperTitle">采集</span> <span class="status status-idle" id="scrapeStatus" data-i18n="idle">闲置</span></h2>
+    <div class="row">
+      <div class="toggle">
+        <input type="radio" name="mode" id="modeIncr" value="incremental" checked>
+        <label for="modeIncr" data-i18n="incremental">增量</label>
+        <input type="radio" name="mode" id="modeFull" value="full">
+        <label for="modeFull" data-i18n="full">全量</label>
+      </div>
+      <button class="btn btn-primary" id="scrapeBtn" onclick="startScrape()" data-i18n="start">开始</button>
+      <button class="btn btn-danger" id="stopBtn" onclick="stopScrape()" style="display:none" data-i18n="stop">停止</button>
+    </div>
+    <div class="conv-list-toolbar" style="margin-top:10px;">
+      <span data-i18n="selectConvsLabel">选择会话:</span>
+      <a href="#" onclick="selectAllConvs('scrape',true);return false;" data-i18n="selectAll">全选</a>
+      <span class="sep">·</span>
+      <a href="#" onclick="selectAllConvs('scrape',false);return false;" data-i18n="selectNone">清空</a>
+      <span class="sep">·</span>
+      <span id="scrapeConvCount">0 / 0</span>
+    </div>
+    <div class="conv-list-box" id="scrapeConvList"></div>
+    <div class="meta" id="scrapeTime"></div>
+    <div class="log-box" id="scrapeLog"></div>
+  </div>
+
+  <!-- Schedule -->
+  <div class="section">
+    <h2 data-i18n="scheduleTitle">定时任务</h2>
+    <div class="schedule-row">
+      <label class="switch">
+        <input type="checkbox" id="scheduleEnabled">
+        <span class="slider"></span>
+      </label>
+      <div style="display:flex;gap:4px;align-items:center;flex:1;">
+        <input type="text" id="cronMin" value="0" style="width:42px;text-align:center" placeholder="min">
+        <input type="text" id="cronHour" value="0" style="width:42px;text-align:center" placeholder="hour">
+        <input type="text" id="cronDay" value="*" style="width:42px;text-align:center" placeholder="day">
+        <input type="text" id="cronMonth" value="*" style="width:42px;text-align:center" placeholder="mon">
+        <input type="text" id="cronDow" value="*" style="width:42px;text-align:center" placeholder="dow">
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="updateSchedule()" data-i18n="apply">应用</button>
+    </div>
+    <div style="margin-top:6px;display:flex;gap:12px;flex-wrap:wrap;">
+      <span style="font-size:11px;color:var(--text3);" data-i18n="cronHint">分 时 日 月 周</span>
+      <span class="cron-preset" onclick="setCron('0 0 * * *')" data-i18n="cronMidnight">每天 00:00</span>
+      <span class="cron-preset" onclick="setCron('0 */6 * * *')" data-i18n="cron6h">每 6 小时</span>
+      <span class="cron-preset" onclick="setCron('0 8,20 * * *')" data-i18n="cron8am8pm">每天 8 点 & 20 点</span>
+      <span class="cron-preset" onclick="setCron('30 2 * * 1')" data-i18n="cronMon">周一 02:30</span>
+    </div>
+    <div class="conv-list-toolbar" style="margin-top:10px;">
+      <span data-i18n="selectConvsLabel">选择会话:</span>
+      <a href="#" onclick="selectAllConvs('schedule',true);return false;" data-i18n="selectAll">全选</a>
+      <span class="sep">·</span>
+      <a href="#" onclick="selectAllConvs('schedule',false);return false;" data-i18n="selectNone">清空</a>
+      <span class="sep">·</span>
+      <span id="scheduleConvCount">0 / 0</span>
+    </div>
+    <div class="conv-list-box" id="scheduleConvList"></div>
+    <div class="meta" id="scheduleMeta" style="margin-top:6px;"></div>
+  </div>
+
+  <!-- Export -->
+  <div class="section">
+    <h2><span data-i18n="exportTitle">导出</span> <span class="status status-idle" id="exportStatus" data-i18n="idle">闲置</span></h2>
+    <div class="row">
+      <select id="exportFormat">
+        <option value="jsonl">JSONL</option>
+        <option value="json">JSON</option>
+      </select>
+      <button class="btn btn-primary" id="exportBtn" onclick="startExport()" data-i18n="exportBtn">导出</button>
+      <a class="btn btn-success" id="downloadBtn" style="display:none;text-decoration:none" href="/panel/api/export/download" data-i18n="download">下载</a>
+    </div>
+    <div class="conv-list-toolbar" style="margin-top:10px;">
+      <span data-i18n="selectConvsLabel">选择会话:</span>
+      <a href="#" onclick="selectAllConvs('export',true);return false;" data-i18n="selectAll">全选</a>
+      <span class="sep">·</span>
+      <a href="#" onclick="selectAllConvs('export',false);return false;" data-i18n="selectNone">清空</a>
+      <span class="sep">·</span>
+      <span id="exportConvCount">0 / 0</span>
+    </div>
+    <div class="conv-list-box" id="exportConvList"></div>
+    <div class="meta" id="exportMsg"></div>
+  </div>
+
+  <!-- Media download -->
+  <div class="section">
+    <h2 data-i18n="mediaTitle">媒体下载</h2>
+    <div class="meta" style="margin-bottom:10px" data-i18n="mediaDesc">将图片/表情包下载到本地，避免抖音 CDN 链接过期后无法显示。</div>
+    <label class="conv-check" style="margin-bottom:10px;cursor:pointer;">
+      <input type="checkbox" id="downloadImagesToggle" onchange="toggleDownloadImages()">
+      <span data-i18n="autoDownloadNew">新采集消息自动下载图片到本地</span>
+    </label>
+    <div class="row">
+      <button class="btn btn-primary" id="backfillBtn" onclick="startBackfill()" data-i18n="backfillBtn">下载历史图片</button>
+      <span class="status status-idle" id="backfillStatus" data-i18n="idle">闲置</span>
+    </div>
+    <div class="meta" id="backfillMsg" style="margin-top:6px"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn btn-primary" id="videoBackfillBtn" onclick="startVideoBackfill()" data-i18n="videoBackfillBtn">下载历史视频</button>
+      <span class="status status-idle" id="videoBackfillStatus" data-i18n="idle">闲置</span>
+      <span class="meta" id="videoPendingCount" style="margin-left:8px"></span>
+    </div>
+    <div class="meta" id="videoBackfillMsg" style="margin-top:6px"></div>
+  </div>
+
+  <div class="section">
+    <h2 data-i18n="passwordTitle">密码</h2>
+    <div class="meta" style="margin-bottom:8px" data-i18n="passwordDesc">设置密码以保护聊天查看器和控制面板。</div>
+    <div class="row">
+      <input type="password" id="pwInput" data-i18n-placeholder="enterPassword" placeholder="输入密码" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg)">
+      <button class="btn btn-primary" onclick="setPassword()" data-i18n="setBtn">设置</button>
+      <button class="btn" onclick="clearPassword()" data-i18n="clearBtn">清除</button>
+    </div>
+    <div class="meta" id="pwStatus" style="margin-top:6px"></div>
+  </div>
+
+  <div class="section">
+    <h2 data-i18n="notifyTitle">通知</h2>
+    <div class="meta" style="margin-bottom:8px">
+      <span data-i18n="notifyDesc">采集失败时通过 Server酱 推送到微信。</span>
+      <a href="https://sct.ftqq.com" target="_blank" rel="noopener">sct.ftqq.com</a>
+    </div>
+    <div class="row">
+      <input type="password" id="notifyKeyInput" data-i18n-placeholder="notifyPlaceholder" placeholder="SCT... SendKey" style="flex:1;padding:6px 10px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--fg)">
+      <button class="btn btn-primary" onclick="saveNotifyKey()" data-i18n="setBtn">设置</button>
+      <button class="btn" onclick="clearNotifyKey()" data-i18n="clearBtn">清除</button>
+      <button class="btn" onclick="testNotify()" data-i18n="notifyTestBtn">测试</button>
+    </div>
+    <div class="meta" id="notifyStatus" style="margin-top:6px"></div>
+  </div>
+
+</div>
+
+<script>
+/* ── i18n ── */
+const T = {
+  zh: {
+    appTitle: '抖音聊天记录导出',
+    chatViewer: '聊天查看器 →',
+    panelTitle: '控制面板',
+    enterPasswordPrompt: '请输入密码',
+    password: '密码',
+    loginBtn: '登录',
+    statConversations: '会话',
+    statMessages: '消息',
+    statUsers: '用户',
+    loginTitle: '登录',
+    scanQr: '扫码登录',
+    cancel: '取消',
+    clearSession: '清除会话',
+    clickScreenshotHint: '点击截图进行交互。下方输入文本后回车发送。',
+    typeAndEnter: '输入文字后回车发送...',
+    convListTitle: '会话列表',
+    refreshConvList: '刷新会话列表',
+    convListHint: '点击"刷新会话列表"从抖音加载全部会话，然后在下方采集/导出/定时各节勾选需要处理的会话。',
+    scraperTitle: '采集',
+    incremental: '增量',
+    full: '全量',
+    start: '开始',
+    stop: '停止',
+    selectConvsLabel: '选择会话:',
+    selectAll: '全选',
+    selectNone: '清空',
+    scheduleTitle: '定时任务',
+    apply: '应用',
+    cronHint: '分 时 日 月 周',
+    cronMidnight: '每天 00:00',
+    cron6h: '每 6 小时',
+    cron8am8pm: '每天 8 点 & 20 点',
+    cronMon: '周一 02:30',
+    exportTitle: '导出',
+    exportBtn: '导出',
+    download: '下载',
+    passwordTitle: '密码',
+    passwordDesc: '设置密码以保护聊天查看器和控制面板。',
+    enterPassword: '输入密码',
+    setBtn: '设置',
+    clearBtn: '清除',
+    idle: '闲置',
+    running: '进行中',
+    completed: '已完成',
+    failed: '失败',
+    checking: '检测中...',
+    loginActive: '登录有效',
+    loginExpired: '登录已过期 — 请重新扫码',
+    loginNoProfile: '未登录 — 请扫码登录',
+    sessionCleared: '会话已清除',
+    clearLoginConfirm: '确定清除登录会话？需要重新扫码。',
+    passwordSet: '密码已设置',
+    passwordEmpty: '请输入密码',
+    noPasswordSet: '未设置密码（查看器公开）',
+    passwordIsSet: '密码已设置',
+    notifyTitle: '通知',
+    notifyDesc: '采集失败时通过 Server酱 推送到微信。',
+    notifyPlaceholder: 'SCT... SendKey',
+    notifyTestBtn: '测试',
+    notifyKeySet: '已配置 SendKey',
+    notifyKeyEmpty: '未配置 SendKey',
+    notifyKeyMissing: '请先粘贴 SendKey',
+    startedAt: '开始: ',
+    finishedAt: '完成: ',
+    noOutput: '(无输出)',
+    nextRun: '下次运行: ',
+    noConvsDiscovered: '尚未发现会话。点击上方"刷新会话列表"。',
+    waitingScan: '等待扫码',
+    startingLogin: '正在启动',
+    error: '错误',
+    convsCount: (n, tot) => n + ' / ' + tot,
+    discoveredAt: (t) => '最近刷新: ' + t,
+    discovered: (n) => '发现 ' + n + ' 个会话',
+    confirmMultiExport: (n) => '将导出 ' + n + ' 个会话并打包为 zip，是否继续？',
+    mediaTitle: '媒体下载',
+    mediaDesc: '将图片/表情包下载到本地，避免抖音 CDN 链接过期后无法显示。',
+    autoDownloadNew: '新采集消息自动下载图片到本地',
+    backfillBtn: '下载历史图片',
+    backfillRunning: (done, total) => '下载中: ' + done + ' / ' + total,
+    backfillDone: (ok, fail) => '完成：成功 ' + ok + '，失败 ' + fail,
+    videoBackfillBtn: '下载历史视频',
+    videoBackfillRunning: (ok, fail, skip, total) => `下载中: 成功 ${ok}，失败 ${fail}，跳过 ${skip} / ${total}`,
+    videoBackfillDone: (ok, fail, skip) => `完成：成功 ${ok}，失败 ${fail}，跳过 ${skip}`,
+    videoPendingTxt: (n) => `（待下载 ${n} 条）`,
+    importCookie: '导入 Cookie',
+    importBtn: '导入',
+    cookiePlaceholder: '粘贴 Cookie（JSON 数组 或 key=value; 格式）...',
+    cookieHintHtml: '<ol><li>在浏览器中打开 <code>douyin.com</code> 并确保<b>已登录</b></li><li>按 <code>F12</code> 打开开发者工具 → <b>Application</b>（应用）标签</li><li>左侧展开 <b>Cookies</b> → <code>https://www.douyin.com</code></li><li>在 Cookie 表格空白处右键 → <b>Copy all cookies</b></li><li>也可在 Console 中执行 <code>document.cookie</code> 并复制结果</li></ol><div style="margin-top:4px">⚠️ 必须包含 <code>sessionid</code>，否则导入无效。</div>',
+    cookieImportSuccess: (n) => '成功导入 ' + n + ' 个 Cookie，登录状态已更新',
+    cookieImportFailed: '导入失败',
+    loginFailed: '登录失败',
+    wrongPassword: '密码错误',
+    refreshFailed: '刷新失败',
+  },
+  en: {
+    appTitle: 'Douyin Chat Export',
+    chatViewer: 'Chat Viewer →',
+    panelTitle: 'Control Panel',
+    enterPasswordPrompt: 'Please enter password',
+    password: 'Password',
+    loginBtn: 'Login',
+    statConversations: 'Conversations',
+    statMessages: 'Messages',
+    statUsers: 'Users',
+    loginTitle: 'Login',
+    scanQr: 'Scan QR Login',
+    cancel: 'Cancel',
+    clearSession: 'Clear Session',
+    clickScreenshotHint: 'Click the screenshot to interact. Type below to input text.',
+    typeAndEnter: 'Type here and press Enter to send...',
+    convListTitle: 'Conversations',
+    refreshConvList: 'Refresh conversation list',
+    convListHint: 'Click "Refresh conversation list" to load all conversations from Douyin, then check the ones you want in each section below.',
+    scraperTitle: 'Scraper',
+    incremental: 'Incremental',
+    full: 'Full',
+    start: 'Start',
+    stop: 'Stop',
+    selectConvsLabel: 'Select conversations:',
+    selectAll: 'Select all',
+    selectNone: 'Clear',
+    scheduleTitle: 'Schedule',
+    apply: 'Apply',
+    cronHint: 'min hour day month weekday',
+    cronMidnight: 'Every midnight',
+    cron6h: 'Every 6 hours',
+    cron8am8pm: '8AM & 8PM',
+    cronMon: 'Mon 2:30AM',
+    exportTitle: 'Export',
+    exportBtn: 'Export',
+    download: 'Download',
+    passwordTitle: 'Password',
+    passwordDesc: 'Set a password to protect the chat viewer and panel.',
+    enterPassword: 'Enter password',
+    setBtn: 'Set',
+    clearBtn: 'Clear',
+    idle: 'idle',
+    running: 'running',
+    completed: 'completed',
+    failed: 'failed',
+    checking: 'checking...',
+    loginActive: 'Login session valid',
+    loginExpired: 'Session expired — click Scan QR Login',
+    loginNoProfile: 'No login session — click Scan QR Login',
+    sessionCleared: 'Session cleared',
+    clearLoginConfirm: 'Clear login session? You will need to re-scan QR code.',
+    passwordSet: 'Password saved',
+    passwordEmpty: 'Please enter a password',
+    noPasswordSet: 'No password set (viewer is public)',
+    passwordIsSet: 'Password is set',
+    notifyTitle: 'Notifications',
+    notifyDesc: 'Push a notice to WeChat via Server酱 when scraping fails.',
+    notifyPlaceholder: 'SCT... SendKey',
+    notifyTestBtn: 'Test',
+    notifyKeySet: 'SendKey configured',
+    notifyKeyEmpty: 'No SendKey configured',
+    notifyKeyMissing: 'Paste a SendKey first',
+    startedAt: 'Started: ',
+    finishedAt: 'Finished: ',
+    noOutput: '(no output)',
+    nextRun: 'Next run: ',
+    noConvsDiscovered: 'No conversations discovered yet. Click "Refresh conversation list" above.',
+    waitingScan: 'waiting scan',
+    startingLogin: 'starting',
+    error: 'error',
+    convsCount: (n, tot) => n + ' / ' + tot,
+    discoveredAt: (t) => 'Last refresh: ' + t,
+    discovered: (n) => 'Found ' + n + ' conversations',
+    confirmMultiExport: (n) => 'Export ' + n + ' conversations as a zip. Continue?',
+    mediaTitle: 'Media Download',
+    mediaDesc: 'Save images and emoji locally to keep them viewable after Douyin CDN URLs expire.',
+    autoDownloadNew: 'Auto-download images to local for newly scraped messages',
+    backfillBtn: 'Backfill historical images',
+    backfillRunning: (done, total) => 'Downloading: ' + done + ' / ' + total,
+    backfillDone: (ok, fail) => 'Done: ' + ok + ' succeeded, ' + fail + ' failed',
+    videoBackfillBtn: 'Backfill historical videos',
+    videoBackfillRunning: (ok, fail, skip, total) => `Downloading: ${ok} ok, ${fail} failed, ${skip} skipped / ${total}`,
+    videoBackfillDone: (ok, fail, skip) => `Done: ${ok} succeeded, ${fail} failed, ${skip} skipped`,
+    videoPendingTxt: (n) => `(${n} pending)`,
+    importCookie: 'Import Cookie',
+    importBtn: 'Import',
+    cookiePlaceholder: 'Paste cookies (JSON array or key=value; format)...',
+    cookieHintHtml: '<ol><li>Open <code>douyin.com</code> in your browser and make sure you are <b>logged in</b></li><li>Press <code>F12</code> to open DevTools → <b>Application</b> tab</li><li>Expand <b>Cookies</b> → <code>https://www.douyin.com</code> in the left panel</li><li>Right-click the cookie table → <b>Copy all cookies</b></li><li>Or run <code>document.cookie</code> in Console and copy the result</li></ol><div style="margin-top:4px">⚠️ Must include <code>sessionid</code> or the import will fail.</div>',
+    cookieImportSuccess: (n) => 'Successfully imported ' + n + ' cookies, login state updated',
+    cookieImportFailed: 'Import failed',
+    loginFailed: 'Login failed',
+    wrongPassword: 'Wrong password',
+    refreshFailed: 'Refresh failed',
+  },
+};
+
+let lang = localStorage.getItem('panel-lang') || 'zh';
+
+function t(key, ...args) {
+  const v = (T[lang] && T[lang][key]) ?? (T.zh && T.zh[key]) ?? key;
+  return typeof v === 'function' ? v(...args) : v;
+}
+
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    const v = T[lang]?.[key];
+    if (typeof v === 'string') el.textContent = v;
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    const v = T[lang]?.[key];
+    if (typeof v === 'string') el.placeholder = v;
+  });
+  document.querySelectorAll('.lang-switcher button').forEach(b => {
+    b.classList.toggle('active', b.dataset.lang === lang);
+  });
+  document.documentElement.lang = lang === 'zh' ? 'zh-CN' : 'en';
+}
+
+function setLang(l) {
+  lang = l;
+  localStorage.setItem('panel-lang', l);
+  applyI18n();
+  // Re-render dynamic texts (counts, meta, lists, etc.)
+  renderDiscoverMeta();
+  renderConvCounts();
+  renderAllConvLists();
+  // Refresh composed strings (scrapeTime, scheduleMeta) that are built from t() calls
+  loadStatus();
+}
+
+/* ── Theme ── */
+function setTheme(t) {
+  document.body.setAttribute('data-theme', t);
+  document.querySelectorAll('.theme-dot').forEach(d => d.classList.toggle('active', d.dataset.t === t));
+  localStorage.setItem('panel-theme', t);
+}
+(function() {
+  const saved = localStorage.getItem('panel-theme');
+  if (saved) setTheme(saved);
+})();
+
+/* ── Conversation selection state ── */
+let discoveredConvs = [];     // [{nickname, name, time, preview}, ...]
+let discoveredAt = 0;
+let selectedMap = {           // section -> Set of nicknames
+  scraper: new Set(),
+  export: new Set(),
+  schedule: new Set(),
+};
+let lastDiscoverStatus = 'idle';
+let lastDiscoverMsg = '';
+
+async function loadStatus() {
+  try {
+    const r = await fetch('/panel/api/status');
+    const d = await r.json();
+    document.getElementById('convCount').textContent = d.conversations;
+    document.getElementById('msgCount').textContent = d.messages.toLocaleString();
+    document.getElementById('userCount').textContent = d.users;
+
+    // Scrape status
+    const ss = d.scrape;
+    const se = document.getElementById('scrapeStatus');
+    setStatusEl(se, ss.status);
+    document.getElementById('scrapeBtn').disabled = ss.status === 'running';
+    document.getElementById('stopBtn').style.display = ss.status === 'running' ? '' : 'none';
+    let timeStr = '';
+    if (ss.started_at) timeStr += t('startedAt') + new Date(ss.started_at * 1000).toLocaleTimeString();
+    if (ss.finished_at) timeStr += '  ' + t('finishedAt') + new Date(ss.finished_at * 1000).toLocaleTimeString();
+    if (ss.message) timeStr += '  ' + ss.message;
+    document.getElementById('scrapeTime').textContent = timeStr;
+
+    if (ss.status === 'running' || ss.status === 'completed' || ss.status === 'failed') {
+      loadLog();
+    }
+
+    // Export status
+    const es = d.export;
+    const ee = document.getElementById('exportStatus');
+    setStatusEl(ee, es.status);
+    document.getElementById('exportBtn').disabled = es.status === 'running';
+    document.getElementById('exportMsg').textContent = es.message || '';
+    document.getElementById('downloadBtn').style.display = (es.status === 'completed' && es.file_path) ? '' : 'none';
+
+    // Schedule status
+    const sch = d.scheduler;
+    document.getElementById('scheduleEnabled').checked = sch.enabled;
+    if (sch.schedule) {
+      const parts = sch.schedule.split(/\s+/);
+      if (parts.length === 5) {
+        ['cronMin','cronHour','cronDay','cronMonth','cronDow'].forEach((id, i) => {
+          document.getElementById(id).value = parts[i];
+        });
+      }
+    }
+    let schMeta = '';
+    if (sch.enabled && sch.next_run) {
+      schMeta = t('nextRun') + new Date(sch.next_run * 1000).toLocaleString();
+    }
+    document.getElementById('scheduleMeta').textContent = schMeta;
+
+  } catch (e) { console.error('Status fetch failed:', e); }
+}
+
+// Set both textContent AND data-i18n so future applyI18n() passes stay in sync
+function setText(el, key) {
+  if (!el) return;
+  el.textContent = t(key);
+  el.setAttribute('data-i18n', key);
+}
+
+// Set dynamic (non-keyed) text — clear data-i18n so applyI18n() won't clobber it
+function setDynText(el, text) {
+  if (!el) return;
+  el.textContent = text || '';
+  el.removeAttribute('data-i18n');
+}
+
+function setStatusEl(el, status) {
+  if (!el) return;
+  setText(el, status);
+  el.className = 'status status-' + status;
+}
+
+/* ── Conversation discovery / checkbox lists ── */
+
+async function loadSelections() {
+  try {
+    const r = await fetch('/panel/api/conversations/selected');
+    const d = await r.json();
+    selectedMap.scraper = new Set(d.scraper || []);
+    selectedMap.export = new Set(d.export || []);
+    selectedMap.schedule = new Set(d.schedule || []);
+  } catch {}
+}
+
+async function loadDiscoveredConvs() {
+  try {
+    const r = await fetch('/panel/api/conversations/refresh/status');
+    const d = await r.json();
+    discoveredConvs = d.items || [];
+    discoveredAt = d.discovered_at || 0;
+    lastDiscoverStatus = d.status || 'idle';
+    lastDiscoverMsg = d.message || '';
+    renderDiscoverMeta();
+    setStatusEl(document.getElementById('discoverStatus'), lastDiscoverStatus);
+    document.getElementById('refreshConvsBtn').disabled = lastDiscoverStatus === 'running';
+    document.getElementById('stopRefreshBtn').style.display = lastDiscoverStatus === 'running' ? '' : 'none';
+    renderAllConvLists();
+  } catch {}
+}
+
+function renderDiscoverMeta() {
+  const el = document.getElementById('discoverMeta');
+  if (!el) return;
+  const parts = [];
+  if (lastDiscoverMsg) parts.push(lastDiscoverMsg);
+  if (discoveredAt) parts.push(t('discoveredAt', new Date(discoveredAt * 1000).toLocaleString()));
+  el.textContent = parts.join(' · ');
+}
+
+function renderAllConvLists() {
+  ['scrape', 'schedule', 'export'].forEach(prefix => renderConvList(prefix));
+  renderConvCounts();
+}
+
+function sectionKey(prefix) {
+  // UI prefix -> backend section name
+  return prefix === 'scrape' ? 'scraper' : prefix;
+}
+
+function renderConvList(prefix) {
+  const box = document.getElementById(prefix + 'ConvList');
+  if (!box) return;
+  box.innerHTML = '';
+  if (discoveredConvs.length === 0) {
+    const empty = document.createElement('div');
+    empty.className = 'conv-list-empty';
+    empty.textContent = t('noConvsDiscovered');
+    box.appendChild(empty);
+    return;
+  }
+  const selected = selectedMap[sectionKey(prefix)];
+  for (const conv of discoveredConvs) {
+    const key = conv.nickname || conv.name;
+    if (!key) continue;
+    const label = document.createElement('label');
+    label.className = 'conv-check';
+    label.title = key;
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.value = key;
+    cb.checked = selected.has(key);
+    cb.onchange = () => onConvToggle(prefix, key, cb.checked);
+    const span = document.createElement('span');
+    span.textContent = key;
+    label.appendChild(cb);
+    label.appendChild(span);
+    box.appendChild(label);
+  }
+}
+
+function renderConvCounts() {
+  ['scrape', 'schedule', 'export'].forEach(prefix => {
+    const el = document.getElementById(prefix + 'ConvCount');
+    if (!el) return;
+    el.textContent = t('convsCount', selectedMap[sectionKey(prefix)].size, discoveredConvs.length);
+  });
+}
+
+let saveTimers = {};
+function onConvToggle(prefix, key, checked) {
+  const section = sectionKey(prefix);
+  const set = selectedMap[section];
+  if (checked) set.add(key); else set.delete(key);
+  renderConvCounts();
+  // Debounced persist
+  clearTimeout(saveTimers[section]);
+  saveTimers[section] = setTimeout(() => persistSelection(section), 400);
+}
+
+async function persistSelection(section) {
+  try {
+    await fetch('/panel/api/conversations/selected', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ section, conversations: [...selectedMap[section]] }),
+    });
+  } catch {}
+}
+
+function selectAllConvs(prefix, checked) {
+  const section = sectionKey(prefix);
+  const set = selectedMap[section];
+  if (checked) {
+    for (const conv of discoveredConvs) {
+      const key = conv.nickname || conv.name;
+      if (key) set.add(key);
+    }
+  } else {
+    set.clear();
+  }
+  renderConvList(prefix);
+  renderConvCounts();
+  persistSelection(section);
+}
+
+function showRefreshError(msg) {
+  const el = document.getElementById('refreshError');
+  if (!el) return;
+  if (msg) {
+    el.textContent = msg;
+    el.style.display = '';
+  } else {
+    el.textContent = '';
+    el.style.display = 'none';
+  }
+}
+
+async function refreshConvs() {
+  showRefreshError('');
+  document.getElementById('refreshConvsBtn').disabled = true;
+  try {
+    const r = await fetch('/panel/api/conversations/refresh', { method: 'POST' });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      showRefreshError(d.error || t('refreshFailed'));
+      document.getElementById('refreshConvsBtn').disabled = false;
+      return;
+    }
+  } catch (e) {
+    showRefreshError(t('refreshFailed') + ': ' + (e.message || e));
+    document.getElementById('refreshConvsBtn').disabled = false;
+    return;
+  }
+  // Poll status + log
+  const poll = async () => {
+    await loadDiscoveredConvs();
+    await loadDiscoverLog();
+    if (lastDiscoverStatus === 'running') {
+      setTimeout(poll, 1500);
+    }
+  };
+  poll();
+}
+
+async function stopRefreshConvs() {
+  await fetch('/panel/api/conversations/refresh/stop', { method: 'POST' });
+  loadDiscoveredConvs();
+  loadDiscoverLog();
+}
+
+async function loadLog() {
+  try {
+    const r = await fetch('/panel/api/scrape/log?lines=80');
+    const d = await r.json();
+    const box = document.getElementById('scrapeLog');
+    box.textContent = d.log || t('noOutput');
+    box.classList.add('show');
+    box.scrollTop = box.scrollHeight;
+  } catch {}
+}
+
+async function loadDiscoverLog() {
+  try {
+    const r = await fetch('/panel/api/conversations/refresh/log?lines=80');
+    const d = await r.json();
+    const box = document.getElementById('discoverLog');
+    if (!box) return;
+    if (d.log) {
+      box.textContent = d.log;
+      box.classList.add('show');
+      box.scrollTop = box.scrollHeight;
+    } else {
+      box.classList.remove('show');
+    }
+  } catch {}
+}
+
+async function startScrape() {
+  const incremental = document.getElementById('modeIncr').checked;
+  const conversations = [...selectedMap.scraper];
+  document.getElementById('scrapeBtn').disabled = true;
+  await fetch('/panel/api/scrape', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ incremental, conversations }),
+  });
+  loadStatus();
+}
+
+async function stopScrape() {
+  await fetch('/panel/api/scrape/stop', { method: 'POST' });
+  loadStatus();
+}
+
+function setCron(expr) {
+  const parts = expr.split(/\s+/);
+  ['cronMin','cronHour','cronDay','cronMonth','cronDow'].forEach((id, i) => {
+    document.getElementById(id).value = parts[i] || '*';
+  });
+}
+
+async function updateSchedule() {
+  const enabled = document.getElementById('scheduleEnabled').checked;
+  const cron = ['cronMin','cronHour','cronDay','cronMonth','cronDow']
+    .map(id => document.getElementById(id).value.trim() || '*').join(' ');
+  const incremental = document.getElementById('modeIncr').checked;
+  const conversations = [...selectedMap.schedule];
+  const r = await fetch('/panel/api/schedule', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ enabled, cron, incremental, conversations }),
+  });
+  const d = await r.json();
+  if (d.error) {
+    document.getElementById('scheduleMeta').textContent = d.error;
+  }
+  loadStatus();
+}
+
+async function startExport() {
+  const format = document.getElementById('exportFormat').value;
+  const conversations = [...selectedMap.export];
+  if (conversations.length > 1 && !confirm(t('confirmMultiExport', conversations.length))) {
+    return;
+  }
+  document.getElementById('exportBtn').disabled = true;
+  setStatusEl(document.getElementById('exportStatus'), 'running');
+  await fetch('/panel/api/export', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ format, conversations }),
+  });
+  loadStatus();
+}
+
+/* ── Media download ── */
+let backfillPollTimer = null;
+
+async function loadDownloadImages() {
+  try {
+    const r = await fetch('/panel/api/config/download-images');
+    const d = await r.json();
+    document.getElementById('downloadImagesToggle').checked = !!d.enabled;
+  } catch {}
+}
+
+async function toggleDownloadImages() {
+  const enabled = document.getElementById('downloadImagesToggle').checked;
+  await fetch('/panel/api/config/download-images', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ enabled }),
+  });
+}
+
+async function startBackfill() {
+  document.getElementById('backfillBtn').disabled = true;
+  setStatusEl(document.getElementById('backfillStatus'), 'running');
+  setDynText(document.getElementById('backfillMsg'), '');
+  await fetch('/panel/api/media/backfill', { method: 'POST' });
+  if (backfillPollTimer) clearInterval(backfillPollTimer);
+  backfillPollTimer = setInterval(pollBackfill, 1500);
+}
+
+async function pollBackfill() {
+  try {
+    const r = await fetch('/panel/api/media/backfill/status');
+    const d = await r.json();
+    const status = d.status || 'idle';
+    setStatusEl(document.getElementById('backfillStatus'), status);
+    if (status === 'running') {
+      setDynText(document.getElementById('backfillMsg'), t('backfillRunning', d.done || 0, d.total || 0));
+    } else if (status === 'completed') {
+      setDynText(document.getElementById('backfillMsg'), t('backfillDone', d.ok || 0, d.failed || 0));
+      document.getElementById('backfillBtn').disabled = false;
+      clearInterval(backfillPollTimer); backfillPollTimer = null;
+    } else if (status === 'failed') {
+      setDynText(document.getElementById('backfillMsg'), d.message || '');
+      document.getElementById('backfillBtn').disabled = false;
+      clearInterval(backfillPollTimer); backfillPollTimer = null;
+    } else {
+      document.getElementById('backfillBtn').disabled = false;
+    }
+  } catch {}
+}
+
+/* ── 视频回填 ── */
+let videoBackfillPollTimer = null;
+
+async function loadVideoPending() {
+  try {
+    const r = await fetch('/panel/api/media/videos/pending');
+    const d = await r.json();
+    setDynText(document.getElementById('videoPendingCount'), t('videoPendingTxt', d.pending || 0));
+  } catch {}
+}
+
+async function startVideoBackfill() {
+  document.getElementById('videoBackfillBtn').disabled = true;
+  setStatusEl(document.getElementById('videoBackfillStatus'), 'running');
+  setDynText(document.getElementById('videoBackfillMsg'), '');
+  await fetch('/panel/api/media/videos/backfill', { method: 'POST' });
+  if (videoBackfillPollTimer) clearInterval(videoBackfillPollTimer);
+  videoBackfillPollTimer = setInterval(pollVideoBackfill, 1500);
+}
+
+async function pollVideoBackfill() {
+  try {
+    const r = await fetch('/panel/api/media/videos/status');
+    const d = await r.json();
+    const status = d.status || 'idle';
+    setStatusEl(document.getElementById('videoBackfillStatus'), status);
+    if (status === 'running') {
+      setDynText(document.getElementById('videoBackfillMsg'),
+        t('videoBackfillRunning', d.ok||0, d.failed||0, d.skipped||0, d.total||0));
+    } else if (status === 'completed') {
+      setDynText(document.getElementById('videoBackfillMsg'),
+        t('videoBackfillDone', d.ok||0, d.failed||0, d.skipped||0));
+      document.getElementById('videoBackfillBtn').disabled = false;
+      clearInterval(videoBackfillPollTimer); videoBackfillPollTimer = null;
+      loadVideoPending();
+    } else if (status === 'failed') {
+      setDynText(document.getElementById('videoBackfillMsg'), d.message || '');
+      document.getElementById('videoBackfillBtn').disabled = false;
+      clearInterval(videoBackfillPollTimer); videoBackfillPollTimer = null;
+    } else {
+      document.getElementById('videoBackfillBtn').disabled = false;
+    }
+  } catch {}
+}
+
+/* ── Password ── */
+async function loadPasswordStatus() {
+  const r = await fetch('/panel/api/password/status');
+  const d = await r.json();
+  setText(document.getElementById('pwStatus'), d.has_password ? 'passwordIsSet' : 'noPasswordSet');
+}
+async function setPassword() {
+  const pw = document.getElementById('pwInput').value;
+  if (!pw) { setText(document.getElementById('pwStatus'), 'passwordEmpty'); return; }
+  const r = await fetch('/panel/api/password', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ password: pw }),
+  });
+  const d = await r.json();
+  setDynText(document.getElementById('pwStatus'), d.message);
+  document.getElementById('pwInput').value = '';
+}
+async function clearPassword() {
+  const r = await fetch('/panel/api/password', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ password: '' }),
+  });
+  const d = await r.json();
+  setDynText(document.getElementById('pwStatus'), d.message);
+}
+
+/* ── Notifications (Server酱) ── */
+async function loadNotifyStatus() {
+  const r = await fetch('/panel/api/notify/serverchan/status');
+  const d = await r.json();
+  setText(document.getElementById('notifyStatus'), d.has_key ? 'notifyKeySet' : 'notifyKeyEmpty');
+}
+async function saveNotifyKey() {
+  const k = document.getElementById('notifyKeyInput').value.trim();
+  if (!k) { setText(document.getElementById('notifyStatus'), 'notifyKeyMissing'); return; }
+  const r = await fetch('/panel/api/notify/serverchan', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ sendkey: k }),
+  });
+  const d = await r.json();
+  setDynText(document.getElementById('notifyStatus'), d.message);
+  document.getElementById('notifyKeyInput').value = '';
+}
+async function clearNotifyKey() {
+  const r = await fetch('/panel/api/notify/serverchan', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ sendkey: '' }),
+  });
+  const d = await r.json();
+  setDynText(document.getElementById('notifyStatus'), d.message);
+}
+async function testNotify() {
+  const r = await fetch('/panel/api/notify/test', { method: 'POST' });
+  const d = await r.json();
+  setDynText(document.getElementById('notifyStatus'), d.message);
+}
+
+/* ── Login ── */
+let loginPollTimer = null;
+
+async function checkLogin() {
+  const ls = document.getElementById('loginStatus');
+  const info = document.getElementById('loginInfo');
+  setText(ls, 'checking'); ls.className = 'status status-running';
+  try {
+    const r = await fetch('/panel/api/login/check');
+    const d = await r.json();
+    if (d.status === 'logged_in') {
+      setText(ls, 'completed'); ls.className = 'status status-completed';
+      setText(info, 'loginActive');
+    } else if (d.status === 'expired') {
+      setText(ls, 'failed'); ls.className = 'status status-failed';
+      setText(info, 'loginExpired');
+    } else if (d.status === 'no_profile') {
+      setText(ls, 'failed'); ls.className = 'status status-failed';
+      setText(info, 'loginNoProfile');
+    } else {
+      setDynText(ls, d.status); ls.className = 'status status-idle';
+      setDynText(info, d.message || '');
+    }
+  } catch { setText(ls, 'error'); ls.className = 'status status-failed'; }
+}
+
+async function startLogin() {
+  document.getElementById('loginBtn').disabled = true;
+  document.getElementById('loginCancelBtn').style.display = '';
+  await fetch('/panel/api/login/start', { method: 'POST' });
+  if (loginPollTimer) clearInterval(loginPollTimer);
+  loginPollTimer = setInterval(pollLoginStatus, 1000);
+}
+
+async function cancelLogin() {
+  await fetch('/panel/api/login/cancel', { method: 'POST' });
+  finishLogin();
+}
+
+function finishLogin() {
+  if (loginPollTimer) { clearInterval(loginPollTimer); loginPollTimer = null; }
+  document.getElementById('loginBtn').disabled = false;
+  document.getElementById('loginCancelBtn').style.display = 'none';
+  document.getElementById('loginScreenshot').style.display = 'none';
+}
+
+async function pollLoginStatus() {
+  try {
+    const r = await fetch('/panel/api/login/status');
+    const d = await r.json();
+    const ls = document.getElementById('loginStatus');
+    const info = document.getElementById('loginInfo');
+
+    if (d.status === 'waiting_scan') {
+      setText(ls, 'waitingScan'); ls.className = 'status status-running';
+      setDynText(info, d.message || '');
+      if (d.screenshot) {
+        document.getElementById('loginImg').src = 'data:image/png;base64,' + d.screenshot;
+        document.getElementById('loginScreenshot').style.display = '';
+      }
+    } else if (d.status === 'logged_in') {
+      setText(ls, 'completed'); ls.className = 'status status-completed';
+      setDynText(info, d.message);
+      finishLogin();
+    } else if (d.status === 'failed') {
+      setText(ls, 'failed'); ls.className = 'status status-failed';
+      setDynText(info, d.message);
+      finishLogin();
+    } else if (d.status === 'starting') {
+      setText(ls, 'startingLogin'); ls.className = 'status status-running';
+      setDynText(info, d.message);
+    }
+  } catch {}
+}
+
+/* ── Mouse interaction on screenshot ── */
+let isDragging = false;
+const VIEWPORT_W = 1400, VIEWPORT_H = 900;
+
+function imgCoords(e) {
+  const img = document.getElementById('loginImg');
+  const rect = img.getBoundingClientRect();
+  const scaleX = VIEWPORT_W / rect.width;
+  const scaleY = VIEWPORT_H / rect.height;
+  return {
+    x: Math.round((e.clientX - rect.left) * scaleX),
+    y: Math.round((e.clientY - rect.top) * scaleY),
+  };
+}
+
+function sendMouse(action, x, y) {
+  fetch('/panel/api/login/mouse', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ action, x, y }),
+  });
+}
+
+function imgMouseDown(e) {
+  e.preventDefault();
+  isDragging = true;
+  const {x, y} = imgCoords(e);
+  sendMouse('mousedown', x, y);
+}
+
+function imgMouseMove(e) {
+  if (!isDragging) return;
+  e.preventDefault();
+  const {x, y} = imgCoords(e);
+  sendMouse('mousemove', x, y);
+}
+
+function imgMouseUp(e) {
+  if (!isDragging) {
+    const {x, y} = imgCoords(e);
+    sendMouse('click', x, y);
+  } else {
+    const {x, y} = imgCoords(e);
+    sendMouse('mouseup', x, y);
+  }
+  isDragging = false;
+}
+
+/* ── Keyboard interaction ── */
+function loginKeyDown(e) {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    const input = document.getElementById('loginKeyInput');
+    const text = input.value;
+    if (text) {
+      fetch('/panel/api/login/keyboard', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ action: 'type', text }),
+      });
+      input.value = '';
+    } else {
+      sendLoginKey('Enter');
+    }
+  }
+}
+
+function sendLoginKey(key) {
+  fetch('/panel/api/login/keyboard', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ action: 'press', key }),
+  });
+}
+
+async function clearLogin() {
+  if (!confirm(t('clearLoginConfirm'))) return;
+  await fetch('/panel/api/login/clear', { method: 'POST' });
+  const ls = document.getElementById('loginStatus');
+  setText(ls, 'idle'); ls.className = 'status status-idle';
+  setText(document.getElementById('loginInfo'), 'sessionCleared');
+}
+
+/* ── Cookie Import ── */
+function toggleCookieImport() {
+  const area = document.getElementById('cookieImportArea');
+  const show = !area.classList.contains('show');
+  area.classList.toggle('show', show);
+  if (show) {
+    document.getElementById('cookieImportHint').innerHTML = t('cookieHintHtml');
+    document.getElementById('cookieImportFeedback').textContent = '';
+    document.getElementById('cookieInput').value = '';
+  }
+}
+
+async function importCookie() {
+  const input = document.getElementById('cookieInput').value.trim();
+  if (!input) return;
+  const fb = document.getElementById('cookieImportFeedback');
+  const btn = document.getElementById('cookieImportBtn');
+  btn.disabled = true;
+  fb.className = 'cookie-import-feedback';
+  fb.textContent = '...';
+  try {
+    const r = await fetch('/panel/api/login/cookie-import', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ cookies: input }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      fb.className = 'cookie-import-feedback success';
+      fb.textContent = t('cookieImportSuccess', d.count || 0);
+      setTimeout(() => { checkLogin(); toggleCookieImport(); }, 1500);
+    } else {
+      fb.className = 'cookie-import-feedback error';
+      fb.textContent = d.error || t('cookieImportFailed');
+    }
+  } catch (e) {
+    fb.className = 'cookie-import-feedback error';
+    fb.textContent = t('cookieImportFailed') + ': ' + e.message;
+  } finally { btn.disabled = false; }
+}
+
+/* ── Panel Auth ── */
+let panelToken = localStorage.getItem('panel_token') || '';
+
+function setCookie(name, val, days) {
+  const d = new Date(); d.setTime(d.getTime() + days*86400000);
+  document.cookie = name + '=' + val + ';expires=' + d.toUTCString() + ';path=/';
+}
+
+async function panelAuthCheck() {
+  try {
+    const r = await fetch('/api/auth/check', {
+      headers: panelToken ? {'Authorization': 'Bearer ' + panelToken} : {}
+    });
+    const d = await r.json();
+    if (!d.need_password || d.authenticated) {
+      // Authenticated or no password set
+      setCookie('auth_token', panelToken, 7);
+      document.getElementById('loginOverlay').style.display = 'none';
+      document.getElementById('mainContainer').style.display = '';
+      checkLogin();
+      // Load selections + discovered conv list before loadStatus so checkboxes
+      // can render with correct prior state.
+      await loadSelections();
+      await loadDiscoveredConvs();
+      loadDiscoverLog();
+      loadStatus();
+      loadPasswordStatus();
+      loadNotifyStatus();
+      loadDownloadImages();
+      pollBackfill();
+      loadVideoPending();
+      pollVideoBackfill();
+      setInterval(loadStatus, 5000);
+    } else {
+      document.getElementById('loginOverlay').style.display = 'flex';
+      document.getElementById('mainContainer').style.display = 'none';
+    }
+  } catch(e) {
+    document.getElementById('loginOverlay').style.display = 'flex';
+  }
+}
+
+async function panelLogin() {
+  const pw = document.getElementById('panelPwInput').value;
+  if (!pw) return;
+  try {
+    const r = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({password: pw})
+    });
+    const d = await r.json();
+    if (d.token) {
+      panelToken = d.token;
+      localStorage.setItem('panel_token', panelToken);
+      setCookie('auth_token', panelToken, 7);
+      document.getElementById('panelLoginErr').textContent = '';
+      panelAuthCheck();
+    } else {
+      document.getElementById('panelLoginErr').textContent = t('wrongPassword');
+    }
+  } catch(e) {
+    document.getElementById('panelLoginErr').textContent = t('loginFailed');
+  }
+}
+
+// Inject token cookie on every fetch for panel API calls
+const _origFetch = window.fetch;
+window.fetch = function(url, opts) {
+  if (panelToken && typeof url === 'string' && url.startsWith('/panel/')) {
+    opts = opts || {};
+    opts.headers = opts.headers || {};
+    if (opts.headers instanceof Headers) {
+      if (!opts.headers.has('Authorization')) opts.headers.set('Authorization', 'Bearer ' + panelToken);
+    } else {
+      if (!opts.headers['Authorization']) opts.headers['Authorization'] = 'Bearer ' + panelToken;
+    }
+  }
+  return _origFetch.call(this, url, opts);
+};
+
+applyI18n();
+panelAuthCheck();
+</script>
+</body>
+</html>
