@@ -8,12 +8,58 @@ import json
 from extractor import exporter
 from extractor.exporter import (
     ChatLabExporter,
+    _build_reply_to,
     _decode_sticker_name,
     _emoji_text_label,
     _render_template_tips,
+    _resolve_message,
     _system_message_text,
 )
 from tests.conftest import insert_conversation, insert_message
+
+
+# ── _resolve_message branch logic (pure) ──
+
+def _msg(**kw):
+    base = {"msg_type": 1, "content": "", "media_url": None, "media_local_path": None}
+    base.update(kw)
+    return base
+
+
+def test_resolve_text():
+    content, ctype, stats = _resolve_message(_msg(content="hi"), None, "/tmp")
+    assert (content, ctype) == ("hi", 0) and stats == {}
+
+
+def test_resolve_voice_beats_everything():
+    cj = {"resource_url": "x", "duration": 2500}
+    content, ctype, stats = _resolve_message(_msg(msg_type=0), cj, "/tmp")
+    assert content == "[语音 2秒]" and ctype == 0 and stats == {"voice": 1}
+
+
+def test_resolve_video_type5():
+    content, ctype, stats = _resolve_message(_msg(msg_type=5), {"duration": 10}, "/tmp")
+    assert content == "[视频 10秒]" and ctype == 0 and stats == {"video": 1}
+
+
+def test_resolve_image_url():
+    content, ctype, stats = _resolve_message(
+        _msg(msg_type=3, media_url="https://cdn/x.jpg"), None, "/tmp")
+    assert content == "https://cdn/x.jpg" and ctype == 1 and stats == {"image": 1}
+
+
+def test_resolve_share_overrides_via_itemid():
+    cj = {"itemId": "42", "content_title": "T", "content_name": "A"}
+    content, ctype, stats = _resolve_message(_msg(msg_type=1, content="{...}"), cj, "/tmp")
+    assert ctype == 24 and stats == {"share": 1}
+    assert content == "[分享视频] T | @A | https://www.douyin.com/video/42"
+
+
+def test_build_reply_to():
+    assert _build_reply_to(None) is None
+    assert _build_reply_to('{"server_id":"1","nickname":"N","content":"C"}') == {
+        "replyTo": "srv_1", "replyToAuthor": "N", "replyToContent": "C"}
+    assert _build_reply_to("not json") is None
 
 
 # ── pure helper functions ──

@@ -204,6 +204,111 @@ def _get_content_json(msg) -> dict | None:
     return None
 
 
+def _resolve_message(msg, cj: dict | None, media_dir: str) -> tuple:
+    """Decide the ChatLab content + type for one DB message.
+
+    Returns (content, chatlab_type, stats) where stats is a dict of counter
+    increments ({'voice':1}, {'image':1,'image_embedded':1}, ...). The ordering
+    of the voice/video/emoji/image and share/system branches is load-bearing and
+    matches the original inline loop exactly (see test_exporter).
+    """
+    msg_type = msg["msg_type"]
+    content = msg["content"]
+    chatlab_type = CHATLAB_TYPE_MAP.get(msg_type, 99)
+    stats: dict = {}
+
+    # 语音消息：msg_type=0 但有 resource_url + duration
+    # 不再嵌 base64 / CDN URL —— 对 LLM 无意义且每条几百 KB；用纯文字标签即可。
+    is_voice = False
+    if cj and cj.get("resource_url") and cj.get("duration"):
+        is_voice = True
+        chatlab_type = 0  # TEXT
+        dur_sec = round(cj["duration"] / 1000)
+        content = f"[语音 {dur_sec}秒]" if dur_sec else "[语音]"
+        stats["voice"] = 1
+
+    # 视频消息：msg_type=5 (新分类) 或 cj.video.vid 兜底（老数据）
+    is_video = False
+    if not is_voice and ((msg_type == 5) or (cj and cj.get("video", {}).get("vid"))):
+        is_video = True
+        try:
+            dur_sec = round(float((cj or {}).get("duration") or 0))
+        except (TypeError, ValueError):
+            dur_sec = 0
+        content = f"[视频 {dur_sec}秒]" if dur_sec else "[视频]"
+        chatlab_type = 0  # TEXT —— ChatLab 没有 video 类型，poster 用 IMAGE 另放
+        stats["video"] = 1
+
+    # 表情：用文字标签代替 URL — CDN 早晚过期，URL 对 LLM 也没意义。
+    if not is_voice and not is_video and chatlab_type == 5:
+        content = _emoji_text_label(content, msg["media_url"])
+        stats["emoji"] = 1
+    # 图片：优先 CDN URL，本地文件 fallback 为 base64
+    elif not is_voice and not is_video and chatlab_type == 1:
+        if msg["media_url"]:
+            content = msg["media_url"]
+            stats["image"] = 1
+        elif msg["media_local_path"] and os.path.isfile(
+            os.path.join(media_dir, msg["media_local_path"])
+        ):
+            data_url = _file_to_data_url(
+                os.path.join(media_dir, msg["media_local_path"])
+            )
+            if data_url:
+                content = data_url
+                stats["image_embedded"] = 1
+            else:
+                chatlab_type = 0
+            stats["image"] = 1
+
+    # 分享消息：以 cj 的形态判断（含 itemId），不依赖 msg_type。
+    # 不要放宽到 aweType / content_title 等字段 —— 表情消息的 cj 也带这些。
+    if not is_voice and not is_video and cj and cj.get("itemId"):
+        item_id = cj.get("itemId", "")
+        title = (cj.get("content_title") or "").strip()
+        author = (cj.get("content_name") or "").strip()
+        parts = []
+        if title:
+            parts.append(title)
+        if author:
+            parts.append(f"@{author}")
+        if item_id:
+            parts.append(f"https://www.douyin.com/video/{item_id}")
+        content = "[分享视频] " + " | ".join(parts) if parts else "[分享视频]"
+        chatlab_type = 24  # SHARE，统一类型
+        stats["share"] = 1
+    # 系统消息（msg_type=0 但不是语音 / 不是 share / 不是 video）
+    elif not is_voice and not is_video and msg_type == 0:
+        content = _system_message_text(content, cj)
+        if chatlab_type == 99:
+            chatlab_type = 0  # TEXT
+        stats["system"] = 1
+
+    # 最终兜底：还是 JSON 的内容统一收敛
+    if isinstance(content, str) and content.startswith("{") and content.endswith("}"):
+        content = "[分享内容]"
+
+    return content, chatlab_type, stats
+
+
+def _build_reply_to(ref_msg_raw) -> dict | None:
+    """Build the ChatLab replyTo block from a message's stored ref_msg JSON."""
+    if not ref_msg_raw:
+        return None
+    try:
+        ref = json.loads(ref_msg_raw) if isinstance(ref_msg_raw, str) else ref_msg_raw
+        ref_info = {}
+        if ref.get("server_id"):
+            ref_info["replyTo"] = f"srv_{ref['server_id']}"
+        if ref.get("nickname"):
+            ref_info["replyToAuthor"] = ref["nickname"]
+        if ref.get("content"):
+            ref_info["replyToContent"] = ref["content"]
+        return ref_info or None
+    except (json.JSONDecodeError, TypeError):
+        return None
+
+
 class ChatLabExporter:
     def __init__(self, conv_name: str = None, output_format: str = "jsonl"):
         self.conv_name = conv_name
@@ -295,8 +400,6 @@ class ChatLabExporter:
         ref_count = 0
 
         for msg in messages:
-            chatlab_type = CHATLAB_TYPE_MAP.get(msg["msg_type"], 99)
-            content = msg["content"]
             cj = _get_content_json(msg)
 
             # 发送方：从 users_map 获取昵称
@@ -305,80 +408,14 @@ class ChatLabExporter:
             if not display_name:
                 display_name = owner_name if uid == owner_uid else conv_name
 
-            # 语音消息：msg_type=0 但有 resource_url + duration
-            # 不再嵌 base64 / CDN URL —— 对 LLM 无意义且每条几百 KB；用纯文字标签即可。
-            is_voice = False
-            if cj and cj.get("resource_url") and cj.get("duration"):
-                is_voice = True
-                chatlab_type = 0  # TEXT
-                dur_sec = round(cj["duration"] / 1000)
-                content = f"[语音 {dur_sec}秒]" if dur_sec else "[语音]"
-                voice_count += 1
-
-            # 视频消息：msg_type=5 (新分类) 或 cj.video.vid 兜底（老数据）
-            # 视频文件本身没存（vid→URL 未解），只有 poster 封面图
-            is_video = False
-            if not is_voice and ((msg["msg_type"] == 5) or (cj and cj.get("video", {}).get("vid"))):
-                is_video = True
-                try:
-                    dur_sec = round(float((cj or {}).get("duration") or 0))
-                except (TypeError, ValueError):
-                    dur_sec = 0
-                content = f"[视频 {dur_sec}秒]" if dur_sec else "[视频]"
-                chatlab_type = 0  # TEXT —— ChatLab 没有 video 类型，poster 用 IMAGE 另放
-                video_count += 1
-
-            # 表情：用文字标签代替 URL — CDN 早晚过期，URL 对 LLM 也没意义。
-            # 从 URL 路径里反解出表情名（如 [续火花]）。
-            if not is_voice and not is_video and chatlab_type == 5:
-                content = _emoji_text_label(content, msg["media_url"])
-                emoji_count += 1
-            # 图片：优先 CDN URL，本地文件 fallback 为 base64
-            elif not is_voice and not is_video and chatlab_type == 1:
-                if msg["media_url"]:
-                    content = msg["media_url"]
-                    image_count += 1
-                elif msg["media_local_path"] and os.path.isfile(
-                    os.path.join(media_dir, msg["media_local_path"])
-                ):
-                    data_url = _file_to_data_url(
-                        os.path.join(media_dir, msg["media_local_path"])
-                    )
-                    if data_url:
-                        content = data_url
-                        image_embedded += 1
-                    else:
-                        chatlab_type = 0
-                    image_count += 1
-
-            # 分享消息：以 cj 的形态判断（含 itemId），不依赖 msg_type ——
-            # 实测有 ~2300 条 share 被错分类成 msg_type=1 (TEXT)，content 直接是 aweme JSON 漏出来。
-            # 不要放宽到 aweType / content_title 等字段 —— 表情消息的 cj 也带这些。
-            if not is_voice and not is_video and cj and cj.get("itemId"):
-                item_id = cj.get("itemId", "")
-                title = (cj.get("content_title") or "").strip()
-                author = (cj.get("content_name") or "").strip()
-                parts = []
-                if title:
-                    parts.append(title)
-                if author:
-                    parts.append(f"@{author}")
-                if item_id:
-                    parts.append(f"https://www.douyin.com/video/{item_id}")
-                content = "[分享视频] " + " | ".join(parts) if parts else "[分享视频]"
-                chatlab_type = 24  # SHARE，统一类型
-                share_normalized += 1
-
-            # 系统消息（msg_type=0 但不是语音 / 不是 share / 不是 video）：模板 JSON 渲染成可读文字
-            elif not is_voice and not is_video and msg["msg_type"] == 0:
-                content = _system_message_text(content, cj)
-                if chatlab_type == 99:
-                    chatlab_type = 0  # TEXT
-                system_count += 1
-
-            # 最终兜底：还是 JSON 的内容（极少数 awemeType 都缺的）统一收敛
-            if isinstance(content, str) and content.startswith("{") and content.endswith("}"):
-                content = "[分享内容]"
+            content, chatlab_type, stats = _resolve_message(msg, cj, media_dir)
+            voice_count += stats.get("voice", 0)
+            video_count += stats.get("video", 0)
+            emoji_count += stats.get("emoji", 0)
+            image_count += stats.get("image", 0)
+            image_embedded += stats.get("image_embedded", 0)
+            share_normalized += stats.get("share", 0)
+            system_count += stats.get("system", 0)
 
             chatlab_msg = {
                 "sender": uid,
@@ -390,21 +427,10 @@ class ChatLabExporter:
             }
 
             # 引用/回复消息
-            if msg["ref_msg"]:
-                try:
-                    ref = json.loads(msg["ref_msg"]) if isinstance(msg["ref_msg"], str) else msg["ref_msg"]
-                    ref_info = {}
-                    if ref.get("server_id"):
-                        ref_info["replyTo"] = f"srv_{ref['server_id']}"
-                    if ref.get("nickname"):
-                        ref_info["replyToAuthor"] = ref["nickname"]
-                    if ref.get("content"):
-                        ref_info["replyToContent"] = ref["content"]
-                    if ref_info:
-                        chatlab_msg["replyTo"] = ref_info
-                        ref_count += 1
-                except (json.JSONDecodeError, TypeError):
-                    pass
+            reply_to = _build_reply_to(msg["ref_msg"])
+            if reply_to:
+                chatlab_msg["replyTo"] = reply_to
+                ref_count += 1
 
             chatlab_messages.append(chatlab_msg)
 
