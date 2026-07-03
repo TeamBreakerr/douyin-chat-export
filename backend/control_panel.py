@@ -258,6 +258,9 @@ async def backfill_status():
 async def backfill_start():
     if _backfill_state["status"] == "running":
         return JSONResponse({"error": "Backfill already running"}, status_code=409)
+    # Mark running synchronously before spawning so two rapid POSTs can't both
+    # pass the 409 check (the coroutine sets it too, but that races).
+    _backfill_state["status"] = "running"
     asyncio.create_task(_run_backfill())
     return {"status": "started"}
 
@@ -367,6 +370,8 @@ async def video_backfill_pending():
 async def video_backfill_start():
     if _video_backfill_state["status"] == "running":
         return JSONResponse({"error": "video backfill already running"}, status_code=409)
+    # Mark running synchronously before spawning to avoid the check-then-act race.
+    _video_backfill_state["status"] = "running"
     asyncio.create_task(_run_video_backfill())
     return {"status": "started"}
 
@@ -474,6 +479,7 @@ async def start_scrape(req: ScrapeRequest):
         cmd.append("--download-images")
 
     _scrape_state["status"] = "running"
+    _scrape_state["stopped"] = False
     _scrape_state["started_at"] = time.time()
     _scrape_state["finished_at"] = None
     _scrape_state["message"] = f"{'增量' if req.incremental else '全量'}采集"
@@ -505,7 +511,12 @@ async def _run_scrape(cmd):
             _scrape_state["process"] = proc
             await proc.wait()
 
-        if proc.returncode == 0:
+        if _scrape_state.get("stopped"):
+            # User-initiated stop: SIGTERM makes returncode nonzero, but this is
+            # not a failure — don't report failed or push a WeChat notification.
+            _scrape_state["status"] = "idle"
+            _scrape_state["message"] = "已停止"
+        elif proc.returncode == 0:
             _scrape_state["status"] = "completed"
             _scrape_state["message"] = "采集完成"
         else:
@@ -517,7 +528,7 @@ async def _run_scrape(cmd):
     finally:
         _scrape_state["finished_at"] = time.time()
         _scrape_state["process"] = None
-        if _scrape_state["status"] == "failed":
+        if _scrape_state["status"] == "failed" and not _scrape_state.get("stopped"):
             asyncio.create_task(_notify_on_failure(
                 "抖音聊天导出 · 采集失败",
                 _build_failure_desp(_scrape_state["message"], LOG_PATH),
@@ -554,6 +565,7 @@ async def discover_log(lines: int = 80):
 async def stop_scrape():
     proc = _scrape_state.get("process")
     if proc and proc.returncode is None:
+        _scrape_state["stopped"] = True  # tell _run_scrape this was intentional
         proc.terminate()
         _scrape_state["status"] = "idle"
         _scrape_state["message"] = "已停止"

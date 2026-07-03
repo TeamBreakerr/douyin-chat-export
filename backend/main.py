@@ -99,7 +99,9 @@ def auth_check(request: Request):
 def auth_login(req: AuthLoginRequest):
     pw_hash = _get_password_hash()
     if not pw_hash:
-        return {"error": "no password set"}, 400
+        # Previously `return {...}, 400`, which FastAPI serialized as HTTP 200
+        # with a JSON array body. Return a real 400.
+        return JSONResponse({"error": "no password set"}, status_code=400)
     if not hmac.compare_digest(_hash_password(req.password), pw_hash):
         raise HTTPException(403, "密码错误")
     token = secrets.token_urlsafe(32)

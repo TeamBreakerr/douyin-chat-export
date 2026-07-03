@@ -65,9 +65,8 @@ def test_token_accepted_without_bearer_prefix(client, monkeypatch, temp_db):
     assert ok.status_code == 200
 
 
-@pytest.mark.xfail(reason="known bug: returns 200 + JSON array instead of 400; "
-                          "fixed in the auth refactor (P2)", strict=False)
 def test_login_when_no_password_returns_400(client, monkeypatch):
     monkeypatch.setattr(main, "_get_password_hash", lambda: None)
     r = client.post("/api/auth/login", json={"password": "x"})
     assert r.status_code == 400
+    assert r.json() == {"error": "no password set"}
