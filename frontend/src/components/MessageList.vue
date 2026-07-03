@@ -227,6 +227,8 @@
 
 <script setup>
 import { ref, reactive, watch, nextTick, onMounted, onUnmounted } from 'vue'
+import { highlightText as _highlightText } from '@/lib/highlight'
+import { resolveAvatarUrl } from '@/lib/media'
 
 const props = defineProps({
   conversation: Object,
@@ -287,13 +289,7 @@ function displayName(msg) {
 }
 
 function getAvatarUrl(msg) {
-  const u = userCache[msg.sender_uid]
-  if (!u?.avatar_url) return null
-  // 本地路径（avatars/xxx.jpg）通过 /media/ 提供
-  if (u.avatar_url.startsWith('avatars/')) return `/media/${u.avatar_url}`
-  // 完整 URL
-  if (u.avatar_url.startsWith('http')) return u.avatar_url
-  return null
+  return resolveAvatarUrl(userCache[msg.sender_uid]?.avatar_url)
 }
 
 async function fetchUserInfo(uid) {
@@ -532,10 +528,8 @@ function isJsonVideo(msg) {
   return !!(cj && cj.video && cj.video.vid)
 }
 
-// 本地是否有 .mp4 视频文件可播
-function hasLocalVideo(msg) {
-  return msg.media_local_path && /\.mp4$/i.test(msg.media_local_path)
-}
+// 本地是否有 .mp4 视频文件可播（与 isVideoMsg 同一判定）
+const hasLocalVideo = isVideoMsg
 
 // 视频封面：优先 inline_pic（仅做缩略图）；本地路径若是 .mp4 则是视频本体，不当封面用
 function getVideoPoster(msg) {
@@ -896,21 +890,9 @@ function formatTime(ts) {
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }) + ' ' + time
 }
 
-function escapeHtml(text) {
-  const div = document.createElement('div')
-  div.textContent = text
-  return div.innerHTML
-}
-
+// Highlight the active search term inside a message bubble.
 function highlightText(text) {
-  if (!text) return ''
-  const safe = escapeHtml(text)
-  if (!props.searchHighlight) return safe
-  const escaped = props.searchHighlight.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return safe.replace(
-    new RegExp(`(${escaped})`, 'gi'),
-    '<mark style="background:var(--highlight);color:#000;padding:0 2px;border-radius:2px">$1</mark>'
-  )
+  return _highlightText(text, props.searchHighlight)
 }
 
 function onImgError(e) {

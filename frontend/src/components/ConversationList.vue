@@ -61,6 +61,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
+import { resolveAvatarUrl } from '@/lib/media'
 
 const props = defineProps({
   activeId: String,
@@ -75,11 +76,7 @@ const deleting = ref(false)
 let searchTimeout = null
 
 function getConvAvatar(conv) {
-  const url = conv.avatar_url
-  if (!url) return null
-  if (url.startsWith('avatars/')) return `/media/${url}`
-  if (url.startsWith('http')) return url
-  return null
+  return resolveAvatarUrl(conv.avatar_url)
 }
 
 async function fetchConversations(search = '') {

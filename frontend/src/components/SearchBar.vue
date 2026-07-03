@@ -40,6 +40,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
+import { highlightText } from '@/lib/highlight'
 
 defineEmits(['navigate'])
 
@@ -85,20 +86,8 @@ function clear() {
   showResults.value = false
 }
 
-function escapeHtml(text) {
-  const div = document.createElement('div')
-  div.textContent = text
-  return div.innerHTML
-}
-
 function highlight(text) {
-  if (!text || !query.value) return escapeHtml(text || '')
-  const safe = escapeHtml(text)
-  const escaped = query.value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-  return safe.replace(
-    new RegExp(`(${escaped})`, 'gi'),
-    '<mark style="background:var(--highlight);color:#000;padding:0 2px;border-radius:2px">$1</mark>'
-  )
+  return highlightText(text, query.value)
 }
 
 function formatTime(ts) {
