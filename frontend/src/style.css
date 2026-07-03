@@ -26,6 +26,8 @@
   --bubble-radius: 14px;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
   --shadow-pop: 0 16px 44px rgba(0, 0, 0, 0.5);
+  /* 己方气泡文字色：深色气泡默认用白字；浅色气泡的主题下面各自覆盖为深字 */
+  --text-on-self: #ffffff;
 }
 
 /* 皮肤：微信绿 */
@@ -35,6 +37,7 @@
   --bg-tertiary: #d9d9d9;
   --bg-message-self: #95ec69;
   --bg-message-other: #ffffff;
+  --text-on-self: #111111;
   --text-primary: #1a1a1a;
   --text-secondary: #555555;
   --text-muted: #999999;
@@ -53,6 +56,7 @@
   --bg-tertiary: #ebebeb;
   --bg-message-self: #d1e8ff;
   --bg-message-other: #f0f0f0;
+  --text-on-self: #1a1a1a;
   --text-primary: #1a1a1a;
   --text-secondary: #555555;
   --text-muted: #999999;

@@ -927,7 +927,7 @@ watch(() => props.jumpToSeq, async (seq) => {
 }
 .msg-item.msg-self .msg-bubble {
   background: var(--bg-message-self);
-  color: #fff;
+  color: var(--text-on-self);
   border: none;
   border-top-left-radius: var(--bubble-radius);
   border-top-right-radius: 4px;
