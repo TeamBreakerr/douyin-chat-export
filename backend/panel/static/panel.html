@@ -8,205 +8,159 @@
 <style>
 /* ── Theme variables ── */
 [data-theme="dark"] {
-  --bg:       #0d1117;
-  --bg2:      #161b22;
-  --bg3:      #21262d;
-  --surface:  #1c2128;
-  --accent:   #58a6ff;
-  --accent2:  #79c0ff;
-  --accent-bg:rgba(56,139,253,0.1);
-  --text:     #c9d1d9;
-  --text2:    #8b949e;
-  --text3:    #6e7681;
-  --border:   #30363d;
-  --green:    #3fb950;
-  --green-bg: rgba(63,185,80,0.12);
-  --red:      #f85149;
-  --red-bg:   rgba(248,81,73,0.12);
-  --yellow:   #d29922;
-  --yellow-bg:rgba(210,153,34,0.12);
-  --shadow:   0 1px 3px rgba(0,0,0,0.3);
+  --bg:       #0f1014;
+  --bg2:      #16181f;
+  --bg3:      #21242e;
+  --surface:  #16181f;
+  --accent:   #f2586e;
+  --accent2:  #ff7488;
+  --accent-bg:color-mix(in srgb, var(--accent) 13%, transparent);
+  --text:     #e9eaf0;
+  --text2:    #9a9daa;
+  --text3:    #656875;
+  --border:   #23262f;
+  --green:    #4dd08a;  --green-bg: color-mix(in srgb, var(--green) 14%, transparent);
+  --red:      #ff5c6c;  --red-bg:   color-mix(in srgb, var(--red) 14%, transparent);
+  --yellow:   #e2b23c;  --yellow-bg:color-mix(in srgb, var(--yellow) 14%, transparent);
+  --shadow:   0 1px 2px rgba(0,0,0,0.28);
 }
 [data-theme="light"] {
-  --bg:       #f6f8fa;
-  --bg2:      #ffffff;
-  --bg3:      #f0f2f5;
-  --surface:  #ffffff;
-  --accent:   #0969da;
-  --accent2:  #0550ae;
-  --accent-bg:rgba(9,105,218,0.08);
-  --text:     #24292f;
-  --text2:    #57606a;
-  --text3:    #8c959f;
-  --border:   #d0d7de;
-  --green:    #1a7f37;
-  --green-bg: rgba(26,127,55,0.08);
-  --red:      #cf222e;
-  --red-bg:   rgba(207,34,46,0.08);
-  --yellow:   #9a6700;
-  --yellow-bg:rgba(154,103,0,0.08);
-  --shadow:   0 1px 3px rgba(31,35,40,0.08);
+  --bg:       #f7f7f9;  --bg2: #ffffff;  --bg3: #eef0f3;  --surface: #ffffff;
+  --accent:   #e5405c;  --accent2: #f2586e;
+  --accent-bg:color-mix(in srgb, var(--accent) 9%, transparent);
+  --text:     #1a1c22;  --text2: #5b606b;  --text3: #9096a1;
+  --border:   #e2e4e9;
+  --green:    #1f9d57;  --green-bg: color-mix(in srgb, var(--green) 10%, transparent);
+  --red:      #d93440;  --red-bg:   color-mix(in srgb, var(--red) 10%, transparent);
+  --yellow:   #b7791f;  --yellow-bg:color-mix(in srgb, var(--yellow) 10%, transparent);
+  --shadow:   0 1px 2px rgba(20,20,30,0.06);
 }
 [data-theme="ocean"] {
-  --bg:       #0b1929;
-  --bg2:      #0f2744;
-  --bg3:      #163561;
-  --surface:  #122a4b;
-  --accent:   #5eb1ef;
-  --accent2:  #90caf9;
-  --accent-bg:rgba(94,177,239,0.1);
-  --text:     #d4e4f7;
-  --text2:    #8eacc5;
-  --text3:    #5d7d96;
-  --border:   #1e3a5f;
-  --green:    #4caf50;
-  --green-bg: rgba(76,175,80,0.12);
-  --red:      #ef5350;
-  --red-bg:   rgba(239,83,80,0.12);
-  --yellow:   #ffa726;
-  --yellow-bg:rgba(255,167,38,0.12);
-  --shadow:   0 1px 3px rgba(0,0,0,0.4);
+  --bg:       #0b1622;  --bg2: #10202f;  --bg3: #18324a;  --surface: #10202f;
+  --accent:   #35c0d6;  --accent2: #66d6e8;
+  --accent-bg:color-mix(in srgb, var(--accent) 13%, transparent);
+  --text:     #dceaf3;  --text2: #8bacc0;  --text3: #5b7d93;
+  --border:   #1c344b;
+  --green:    #45c98a;  --green-bg: color-mix(in srgb, var(--green) 14%, transparent);
+  --red:      #f2586e;  --red-bg:   color-mix(in srgb, var(--red) 14%, transparent);
+  --yellow:   #e6b34a;  --yellow-bg:color-mix(in srgb, var(--yellow) 14%, transparent);
+  --shadow:   0 1px 2px rgba(0,0,0,0.35);
 }
 [data-theme="purple"] {
-  --bg:       #13111c;
-  --bg2:      #1c1828;
-  --bg3:      #2a2438;
-  --surface:  #211c30;
-  --accent:   #bb86fc;
-  --accent2:  #d4b0ff;
-  --accent-bg:rgba(187,134,252,0.1);
-  --text:     #e2daf0;
-  --text2:    #9e8fba;
-  --text3:    #6e5f8a;
-  --border:   #332d44;
-  --green:    #66bb6a;
-  --green-bg: rgba(102,187,106,0.12);
-  --red:      #ef5350;
-  --red-bg:   rgba(239,83,80,0.12);
-  --yellow:   #ffc107;
-  --yellow-bg:rgba(255,193,7,0.12);
-  --shadow:   0 1px 3px rgba(0,0,0,0.4);
+  --bg:       #120f1c;  --bg2: #1a1626;  --bg3: #271f38;  --surface: #1a1626;
+  --accent:   #b57cff;  --accent2: #cda3ff;
+  --accent-bg:color-mix(in srgb, var(--accent) 14%, transparent);
+  --text:     #e7dcf7;  --text2: #a394c0;  --text3: #6f6190;
+  --border:   #2c2440;
+  --green:    #57d09a;  --green-bg: color-mix(in srgb, var(--green) 14%, transparent);
+  --red:      #ff6b81;  --red-bg:   color-mix(in srgb, var(--red) 14%, transparent);
+  --yellow:   #e6b34a;  --yellow-bg:color-mix(in srgb, var(--yellow) 14%, transparent);
+  --shadow:   0 1px 2px rgba(0,0,0,0.4);
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Noto Sans SC', sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  min-height: 100vh;
-  transition: background 0.3s, color 0.3s;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+  background: var(--bg); color: var(--text); min-height: 100vh;
+  -webkit-font-smoothing: antialiased; transition: background 0.3s, color 0.3s;
 }
-.container { max-width: 860px; margin: 0 auto; padding: 32px 20px; }
 
-/* ── Header ── */
-.header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 28px;
+/* ── App shell: sidebar + main ── */
+.panel-shell { display: flex; min-height: 100vh; }
+.sidebar {
+  width: 224px; flex-shrink: 0; background: var(--bg2);
+  border-right: 1px solid var(--border);
+  padding: 22px 14px; display: flex; flex-direction: column;
+  position: sticky; top: 0; height: 100vh;
 }
-.header h1 {
-  font-size: 20px;
-  font-weight: 600;
-  color: var(--text);
-  letter-spacing: -0.3px;
+.brand {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 15px; font-weight: 700; letter-spacing: -0.01em; color: var(--text);
+  padding: 0 8px 4px; line-height: 1.3;
 }
-.header-right { display: flex; align-items: center; gap: 12px; }
+.brand-dot {
+  width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-bg);
+}
+.nav { display: flex; flex-direction: column; gap: 2px; margin-top: 20px; }
+.nav-item {
+  display: flex; align-items: center; gap: 11px;
+  padding: 9px 12px; border-radius: 9px; cursor: pointer;
+  color: var(--text2); font-size: 14px; font-weight: 500;
+  border-left: 2px solid transparent; transition: background 0.15s, color 0.15s;
+  user-select: none;
+}
+.nav-item:hover { background: color-mix(in srgb, var(--text) 5%, transparent); color: var(--text); }
+.nav-item.active { background: var(--accent-bg); color: var(--accent); }
+.nav-item .ico {
+  width: 18px; text-align: center; font-size: 15px; flex-shrink: 0; opacity: 0.9;
+}
+.side-foot { margin-top: auto; display: flex; flex-direction: column; gap: 12px; padding-top: 16px; }
 
-/* Theme switcher */
-.theme-switcher {
-  display: flex;
-  gap: 6px;
-  padding: 4px;
-  background: var(--bg3);
-  border-radius: 8px;
-  border: 1px solid var(--border);
-}
-.theme-dot {
-  width: 22px; height: 22px;
-  border-radius: 6px;
-  border: 2px solid transparent;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.theme-dot:hover { transform: scale(1.15); }
-.theme-dot.active { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-bg); }
-.theme-dot[data-t="dark"]   { background: #0d1117; }
-.theme-dot[data-t="light"]  { background: #f6f8fa; border-color: #d0d7de; }
-.theme-dot[data-t="light"].active { border-color: #0969da; }
-.theme-dot[data-t="ocean"]  { background: linear-gradient(135deg, #0b1929, #163561); }
-.theme-dot[data-t="purple"] { background: linear-gradient(135deg, #13111c, #2a2438); }
-
-.viewer-btn {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 7px 16px; border-radius: 8px; font-size: 13px; font-weight: 500;
-  color: var(--accent); background: var(--accent-bg); border: 1px solid var(--border);
-  text-decoration: none; transition: all 0.15s;
-}
-.viewer-btn:hover { background: var(--accent); color: #fff; }
+/* ── Main content ── */
+.panel-main { flex: 1; min-width: 0; padding: 30px 34px; max-width: 940px; }
+.page-head { margin-bottom: 22px; }
+.page-head h1 { font-size: 22px; font-weight: 700; letter-spacing: -0.01em; }
+.page-head p { font-size: 13px; color: var(--text3); margin-top: 4px; }
+.panel-page { display: none; animation: pageIn 0.2s ease; }
+.panel-page.active { display: block; }
+@keyframes pageIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 
 /* ── Stats cards ── */
-.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 24px; }
+.cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 6px; }
 .card {
-  background: var(--bg2); border-radius: 12px; padding: 20px;
-  text-align: center; border: 1px solid var(--border);
-  box-shadow: var(--shadow); transition: transform 0.15s, box-shadow 0.15s;
+  background: var(--bg2); border-radius: var(--radius, 14px); padding: 22px 20px;
+  text-align: center; border: 1px solid var(--border); box-shadow: var(--shadow);
+  transition: transform 0.15s, border-color 0.15s;
 }
-.card:hover { transform: translateY(-2px); box-shadow: var(--shadow), 0 4px 12px rgba(0,0,0,0.1); }
-.card .num {
-  font-size: 30px; font-weight: 700; color: var(--accent);
-  font-variant-numeric: tabular-nums;
-}
-.card .label { font-size: 12px; color: var(--text2); margin-top: 6px; text-transform: uppercase; letter-spacing: 0.5px; }
+.card:hover { transform: translateY(-2px); border-color: color-mix(in srgb, var(--accent) 40%, var(--border)); }
+.card .num { font-size: 32px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
+.card .label { font-size: 12px; color: var(--text2); margin-top: 6px; letter-spacing: 0.4px; }
 
-/* ── Sections ── */
+/* ── Sections (cards inside a page) ── */
 .section {
-  background: var(--bg2); border-radius: 12px; padding: 22px;
+  background: var(--bg2); border-radius: 14px; padding: 22px;
   margin-bottom: 16px; border: 1px solid var(--border); box-shadow: var(--shadow);
 }
 .section h2 {
-  font-size: 14px; font-weight: 600; margin-bottom: 14px;
+  font-size: 13px; font-weight: 600; margin-bottom: 15px;
   display: flex; align-items: center; gap: 10px;
-  text-transform: uppercase; letter-spacing: 0.3px; color: var(--text2);
+  letter-spacing: 0.2px; color: var(--text2);
 }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .row + .row { margin-top: 10px; }
 
 /* ── Form controls ── */
-select, input[type=text] {
+select, input[type=text], input[type=password] {
   background: var(--bg3); border: 1px solid var(--border); color: var(--text);
-  padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none;
+  padding: 8px 12px; border-radius: 9px; font-size: 13px; outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
 
 .btn {
-  padding: 8px 18px; border: none; border-radius: 8px; font-size: 13px;
-  cursor: pointer; font-weight: 500; transition: all 0.15s;
+  padding: 8px 18px; border: none; border-radius: 9px; font-size: 13px;
+  cursor: pointer; font-weight: 600; transition: filter 0.15s, background 0.15s, border-color 0.15s, color 0.15s;
   display: inline-flex; align-items: center; gap: 6px;
 }
 .btn-primary { background: var(--accent); color: #fff; }
-.btn-primary:hover { filter: brightness(1.1); }
+.btn-primary:hover { filter: brightness(1.08); }
 .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
 .btn-danger { background: var(--red); color: #fff; }
-.btn-danger:hover { filter: brightness(1.1); }
+.btn-danger:hover { filter: brightness(1.08); }
 .btn-success { background: var(--green); color: #fff; text-decoration: none; }
-.btn-success:hover { filter: brightness(1.1); }
-.btn-outline {
-  background: transparent; color: var(--text2); border: 1px solid var(--border);
-}
+.btn-success:hover { filter: brightness(1.08); }
+.btn-outline { background: transparent; color: var(--text2); border: 1px solid var(--border); }
 .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
-.btn-sm { padding: 4px 10px; font-size: 12px; }
+.btn-sm { padding: 5px 11px; font-size: 12px; }
 
 /* ── Status badge ── */
 .status {
   display: inline-flex; align-items: center; gap: 5px;
-  padding: 3px 10px; border-radius: 20px; font-size: 11px;
-  font-weight: 600; text-transform: uppercase; letter-spacing: 0.3px;
+  padding: 3px 10px; border-radius: 999px; font-size: 11px;
+  font-weight: 600; letter-spacing: 0.2px;
 }
-.status::before {
-  content: ''; width: 6px; height: 6px; border-radius: 50%;
-}
+.status::before { content: ''; width: 6px; height: 6px; border-radius: 50%; }
 .status-idle { background: var(--bg3); color: var(--text3); }
 .status-idle::before { background: var(--text3); }
 .status-running { background: var(--yellow-bg); color: var(--yellow); }
@@ -215,171 +169,161 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 .status-completed::before { background: var(--green); }
 .status-failed { background: var(--red-bg); color: var(--red); }
 .status-failed::before { background: var(--red); }
-
 @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
 
 /* ── Log box ── */
 .log-box {
-  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-  padding: 12px; margin-top: 14px; max-height: 220px; overflow-y: auto;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 9px;
+  padding: 12px; margin-top: 14px; max-height: 240px; overflow-y: auto;
   font-family: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
   font-size: 12px; line-height: 1.6; color: var(--text2);
   white-space: pre-wrap; word-break: break-all; display: none;
 }
 .log-box.show { display: block; }
-.log-box::-webkit-scrollbar { width: 6px; }
-.log-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.log-box::-webkit-scrollbar, .conv-list-box::-webkit-scrollbar { width: 7px; }
+.log-box::-webkit-scrollbar-thumb, .conv-list-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
 
-/* ── Meta info ── */
 .meta { font-size: 12px; color: var(--text3); margin-top: 8px; }
+.meta a, .page-head a { color: var(--accent); text-decoration: none; }
+.meta a:hover, .page-head a:hover { text-decoration: underline; }
 
 /* ── Custom filter chips ── */
 .chip-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chip {
   display: inline-flex; align-items: center; gap: 4px;
-  padding: 3px 10px; border-radius: 20px; font-size: 12px;
-  background: var(--accent-bg); color: var(--accent); border: 1px solid var(--border);
+  padding: 3px 10px; border-radius: 999px; font-size: 12px;
+  background: var(--accent-bg); color: var(--accent); border: 1px solid transparent;
 }
-.chip .remove {
-  cursor: pointer; opacity: 0.6; font-size: 14px; line-height: 1;
-  margin-left: 2px;
-}
+.chip .remove { cursor: pointer; opacity: 0.6; font-size: 14px; line-height: 1; margin-left: 2px; }
 .chip .remove:hover { opacity: 1; color: var(--red); }
 
 /* ── Cookie import ── */
 .cookie-import-area {
   display: none; margin-top: 14px; padding: 16px;
-  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 9px;
 }
 .cookie-import-area.show { display: block; }
 .cookie-import-area textarea {
   width: 100%; min-height: 100px; background: var(--bg3);
   border: 1px solid var(--border); color: var(--text);
-  padding: 10px 12px; border-radius: 8px;
+  padding: 10px 12px; border-radius: 9px;
   font-family: 'SF Mono','Cascadia Code','Consolas',monospace;
-  font-size: 12px; line-height: 1.5; resize: vertical;
-  outline: none; box-sizing: border-box;
+  font-size: 12px; line-height: 1.5; resize: vertical; outline: none; box-sizing: border-box;
 }
-.cookie-import-area textarea:focus {
-  border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg);
-}
-.cookie-import-hint {
-  font-size: 12px; color: var(--text3); line-height: 1.7; margin-bottom: 10px;
-}
+.cookie-import-area textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+.cookie-import-hint { font-size: 12px; color: var(--text3); line-height: 1.7; margin-bottom: 10px; }
 .cookie-import-hint ol { padding-left: 18px; margin: 6px 0; }
-.cookie-import-hint code {
-  background: var(--bg3); padding: 1px 5px; border-radius: 3px;
-  font-size: 11px; font-family: 'SF Mono','Cascadia Code','Consolas',monospace;
-}
+.cookie-import-hint code { background: var(--bg3); padding: 1px 5px; border-radius: 3px; font-size: 11px; font-family: 'SF Mono','Consolas',monospace; }
 .cookie-import-feedback { margin-top: 8px; font-size: 12px; min-height: 18px; }
 .cookie-import-feedback.success { color: var(--green); }
 .cookie-import-feedback.error { color: var(--red); }
 
-/* Inline error banner (replaces alert popups) */
 .inline-error {
-  margin-top: 10px;
-  padding: 8px 12px;
-  background: var(--accent-bg);
-  border: 1px solid var(--red);
-  color: var(--red);
-  border-radius: 6px;
-  font-size: 13px;
-  line-height: 1.4;
+  margin-top: 10px; padding: 8px 12px; background: var(--red-bg);
+  border: 1px solid var(--red); color: var(--red); border-radius: 8px; font-size: 13px; line-height: 1.4;
 }
 
-/* ── Schedule section ── */
+/* ── Schedule ── */
 .schedule-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .schedule-row input[type=text] { width: 80px; text-align: center; }
 .cron-preset {
   font-size: 11px; color: var(--accent); cursor: pointer;
-  padding: 2px 8px; border-radius: 4px; background: var(--accent-bg);
-  border: 1px solid var(--border); transition: all 0.15s;
+  padding: 3px 9px; border-radius: 999px; background: var(--accent-bg);
+  border: 1px solid transparent; transition: filter 0.15s;
 }
-.cron-preset:hover { background: var(--accent); color: #fff; }
+.cron-preset:hover { filter: brightness(1.15); }
 
 /* ── Conversation checkbox list ── */
 .conv-list-box {
   display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 6px 10px;
-  max-height: 220px; overflow-y: auto;
-  padding: 10px;
-  background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
-  margin-top: 8px;
+  gap: 6px 10px; max-height: 240px; overflow-y: auto; padding: 10px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: 9px; margin-top: 8px;
 }
-.conv-list-box::-webkit-scrollbar { width: 6px; }
-.conv-list-box::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 .conv-check {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; align-items: center; gap: 7px;
   font-size: 13px; color: var(--text); cursor: pointer;
-  padding: 3px 4px; border-radius: 4px;
+  padding: 4px 6px; border-radius: 6px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.conv-check:hover { background: var(--bg3); }
-.conv-check input[type=checkbox] {
-  accent-color: var(--accent); cursor: pointer; flex-shrink: 0;
-}
-.conv-list-empty {
-  padding: 14px; text-align: center; font-size: 12px;
-  color: var(--text3);
-  grid-column: 1 / -1;
-}
-.conv-list-toolbar {
-  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
-  font-size: 12px; color: var(--text2);
-}
+.conv-check:hover { background: color-mix(in srgb, var(--text) 6%, transparent); }
+.conv-check input[type=checkbox] { accent-color: var(--accent); cursor: pointer; flex-shrink: 0; }
+.conv-list-empty { padding: 14px; text-align: center; font-size: 12px; color: var(--text3); grid-column: 1 / -1; }
+.conv-list-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; color: var(--text2); }
+.conv-list-toolbar a { color: var(--accent); text-decoration: none; }
+.conv-list-toolbar a:hover { text-decoration: underline; }
 .conv-list-toolbar .sep { color: var(--text3); }
 
 /* ── Language switcher ── */
 .lang-switcher {
-  display: inline-flex; gap: 2px;
-  padding: 3px; background: var(--bg3);
-  border-radius: 8px; border: 1px solid var(--border);
-  font-size: 12px;
+  display: inline-flex; gap: 2px; padding: 3px; background: var(--bg3);
+  border-radius: 9px; border: 1px solid var(--border); font-size: 12px; align-self: flex-start;
 }
 .lang-switcher button {
   background: transparent; border: none; color: var(--text2);
-  padding: 3px 10px; border-radius: 5px; cursor: pointer;
-  font-size: 12px; font-weight: 500;
+  padding: 4px 12px; border-radius: 6px; cursor: pointer; font-size: 12px; font-weight: 600;
 }
-.lang-switcher button.active {
-  background: var(--accent); color: #fff;
-}
+.lang-switcher button.active { background: var(--accent); color: #fff; }
 
-.switch {
-  position: relative; width: 38px; height: 22px; cursor: pointer;
+/* Theme switcher */
+.theme-switcher { display: flex; gap: 7px; align-items: center; padding: 0 4px; }
+.theme-dot {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 1px solid rgba(255,255,255,0.14); cursor: pointer; transition: transform 0.15s, box-shadow 0.15s;
 }
+.theme-dot:hover { transform: scale(1.15); }
+.theme-dot.active { box-shadow: 0 0 0 2px var(--bg2), 0 0 0 4px var(--accent); }
+.theme-dot[data-t="dark"]   { background: #f2586e; }
+.theme-dot[data-t="light"]  { background: #f7f7f9; border-color: #d0d7de; }
+.theme-dot[data-t="ocean"]  { background: #35c0d6; }
+.theme-dot[data-t="purple"] { background: #b57cff; }
+
+.viewer-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 9px 14px; border-radius: 9px; font-size: 13px; font-weight: 600;
+  color: var(--accent); background: var(--accent-bg); border: 1px solid transparent;
+  text-decoration: none; transition: filter 0.15s;
+}
+.viewer-btn:hover { filter: brightness(1.1); }
+
+/* ── Toggle switch (schedule enable) ── */
+.switch { position: relative; width: 38px; height: 22px; cursor: pointer; }
 .switch input { display: none; }
-.switch .slider {
-  position: absolute; inset: 0; background: var(--bg3); border-radius: 22px;
-  border: 1px solid var(--border); transition: all 0.2s;
-}
-.switch .slider::before {
-  content: ''; position: absolute; left: 2px; top: 2px;
-  width: 16px; height: 16px; border-radius: 50%;
-  background: var(--text3); transition: all 0.2s;
-}
+.switch .slider { position: absolute; inset: 0; background: var(--bg3); border-radius: 22px; border: 1px solid var(--border); transition: all 0.2s; }
+.switch .slider::before { content: ''; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--text3); transition: all 0.2s; }
 .switch input:checked + .slider { background: var(--accent-bg); border-color: var(--accent); }
 .switch input:checked + .slider::before { transform: translateX(16px); background: var(--accent); }
 
 /* ── Toggle (incr/full) ── */
-.toggle {
-  display: flex; border-radius: 8px; overflow: hidden;
-  border: 1px solid var(--border); background: var(--bg3);
-}
-.toggle label {
-  padding: 7px 16px; font-size: 12px; cursor: pointer;
-  transition: all 0.15s; color: var(--text2); font-weight: 500;
-}
+.toggle { display: flex; border-radius: 9px; overflow: hidden; border: 1px solid var(--border); background: var(--bg3); }
+.toggle label { padding: 7px 16px; font-size: 12px; cursor: pointer; transition: all 0.15s; color: var(--text2); font-weight: 600; }
 .toggle input { display: none; }
 .toggle input:checked + label { background: var(--accent); color: #fff; }
 
-/* ── Responsive ── */
-@media (max-width: 600px) {
-  .container { padding: 16px 12px; }
-  .cards { grid-template-columns: repeat(3, 1fr); gap: 8px; }
-  .card { padding: 14px 8px; }
-  .card .num { font-size: 22px; }
-  .header { flex-wrap: wrap; gap: 10px; }
+/* ── Login overlay ── */
+#loginOverlay { position: fixed; inset: 0; z-index: 9999; background: var(--bg); display: flex; align-items: center; justify-content: center; }
+
+/* ── Responsive: sidebar collapses to a top bar ── */
+@media (max-width: 820px) {
+  .panel-shell { flex-direction: column; }
+  .sidebar {
+    width: 100%; height: auto; position: static; flex-direction: row;
+    align-items: center; gap: 10px; padding: 12px 14px; overflow-x: auto;
+  }
+  .brand { padding: 0; white-space: nowrap; }
+  .brand span:last-child { display: none; }
+  .nav { flex-direction: row; margin-top: 0; gap: 4px; }
+  .nav-item { border-left: none; padding: 8px 12px; }
+  .nav-item span:last-child { display: none; }
+  .nav-item .ico { font-size: 17px; }
+  .side-foot { margin-top: 0; margin-left: auto; flex-direction: row; align-items: center; gap: 10px; padding-top: 0; }
+  .side-foot .viewer-btn span { display: none; }
+  .panel-main { padding: 20px 16px; }
+}
+@media (max-width: 520px) {
+  .cards { gap: 8px; }
+  .card { padding: 16px 8px; }
+  .card .num { font-size: 24px; }
+  .nav-item span:last-child { display: none; }
 }
 </style>
 </head>
@@ -394,12 +338,19 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     <div id="panelLoginErr" style="margin-top:10px;color:var(--red);font-size:13px;"></div>
   </div>
 </div>
-<div class="container" id="mainContainer" style="display:none;">
+<div class="panel-shell" id="mainContainer" style="display:none;">
 
-  <!-- Header -->
-  <div class="header">
-    <h1 data-i18n="appTitle">抖音聊天记录导出</h1>
-    <div class="header-right">
+  <aside class="sidebar">
+    <div class="brand"><span class="brand-dot"></span><span data-i18n="appTitle">抖音聊天记录导出</span></div>
+    <nav class="nav">
+      <div class="nav-item active" data-page="overview" onclick="showPage('overview')"><span class="ico">◫</span><span data-i18n="navOverview">概览</span></div>
+      <div class="nav-item" data-page="scrape" onclick="showPage('scrape')"><span class="ico">⭳</span><span data-i18n="navScrape">采集</span></div>
+      <div class="nav-item" data-page="schedule" onclick="showPage('schedule')"><span class="ico">◷</span><span data-i18n="navSchedule">定时</span></div>
+      <div class="nav-item" data-page="export" onclick="showPage('export')"><span class="ico">⤓</span><span data-i18n="navExport">导出</span></div>
+      <div class="nav-item" data-page="login" onclick="showPage('login')"><span class="ico">◉</span><span data-i18n="navLogin">登录</span></div>
+      <div class="nav-item" data-page="settings" onclick="showPage('settings')"><span class="ico">⚙</span><span data-i18n="navSettings">设置</span></div>
+    </nav>
+    <div class="side-foot">
       <div class="lang-switcher">
         <button data-lang="zh" onclick="setLang('zh')">中</button>
         <button data-lang="en" onclick="setLang('en')">EN</button>
@@ -412,52 +363,23 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
       </div>
       <a href="/" class="viewer-btn" data-i18n="chatViewer">聊天查看器 &rarr;</a>
     </div>
-  </div>
+  </aside>
 
-  <!-- Stats -->
-  <div class="cards">
-    <div class="card"><div class="num" id="convCount">-</div><div class="label" data-i18n="statConversations">会话</div></div>
-    <div class="card"><div class="num" id="msgCount">-</div><div class="label" data-i18n="statMessages">消息</div></div>
-    <div class="card"><div class="num" id="userCount">-</div><div class="label" data-i18n="statUsers">用户</div></div>
-  </div>
+  <main class="panel-main">
 
-  <!-- Login -->
-  <div class="section" id="loginSection">
-    <h2><span data-i18n="loginTitle">登录</span> <span class="status status-idle" id="loginStatus" data-i18n="checking">检测中...</span></h2>
-    <div id="loginInfo" class="meta" style="margin-bottom:10px"></div>
-    <div class="row">
-      <button class="btn btn-primary" id="loginBtn" onclick="startLogin()" data-i18n="scanQr">扫码登录</button>
-      <button class="btn btn-danger" id="loginCancelBtn" onclick="cancelLogin()" style="display:none" data-i18n="cancel">取消</button>
-      <button class="btn btn-primary" onclick="toggleCookieImport()" data-i18n="importCookie">导入 Cookie</button>
-      <button class="btn btn-outline btn-sm" onclick="clearLogin()" data-i18n="clearSession">清除会话</button>
-    </div>
-    <div id="cookieImportArea" class="cookie-import-area">
-      <div class="cookie-import-hint" id="cookieImportHint"></div>
-      <textarea id="cookieInput" data-i18n-placeholder="cookiePlaceholder" placeholder="粘贴 Cookie 内容..."></textarea>
-      <div class="row" style="margin-top:10px;">
-        <button class="btn btn-primary btn-sm" id="cookieImportBtn" onclick="importCookie()" data-i18n="importBtn">导入</button>
-        <button class="btn btn-outline btn-sm" onclick="toggleCookieImport()" data-i18n="cancel">取消</button>
-      </div>
-      <div class="cookie-import-feedback" id="cookieImportFeedback"></div>
-    </div>
-    <div id="loginScreenshot" style="display:none;margin-top:14px;position:relative;user-select:none;">
-      <div style="font-size:11px;color:var(--text3);margin-bottom:6px;" data-i18n="clickScreenshotHint">点击截图进行交互。下方输入文本后回车发送。</div>
-      <div style="text-align:center;">
-        <img id="loginImg" style="max-width:100%;border-radius:8px;border:1px solid var(--border);cursor:crosshair;"
-             onmousedown="imgMouseDown(event)" onmousemove="imgMouseMove(event)" onmouseup="imgMouseUp(event)"
-             ondragstart="return false" />
-      </div>
-      <div style="display:flex;gap:8px;margin-top:10px;align-items:center;">
-        <input type="text" id="loginKeyInput" data-i18n-placeholder="typeAndEnter" placeholder="输入文字后回车发送..."
-               style="flex:1;" onkeydown="loginKeyDown(event)" autocomplete="off" />
-        <button class="btn btn-outline btn-sm" onclick="sendLoginKey('Backspace')">⌫</button>
-        <button class="btn btn-outline btn-sm" onclick="sendLoginKey('Tab')">Tab</button>
-        <button class="btn btn-outline btn-sm" onclick="sendLoginKey('Enter')">Enter</button>
+    <!-- Overview -->
+    <div class="panel-page active" id="page-overview">
+      <div class="page-head"><h1 data-i18n="navOverview">概览</h1><p data-i18n="overviewDesc">导出统计与快捷状态。</p></div>
+      <div class="cards">
+        <div class="card"><div class="num" id="convCount">-</div><div class="label" data-i18n="statConversations">会话</div></div>
+        <div class="card"><div class="num" id="msgCount">-</div><div class="label" data-i18n="statMessages">消息</div></div>
+        <div class="card"><div class="num" id="userCount">-</div><div class="label" data-i18n="statUsers">用户</div></div>
       </div>
     </div>
-  </div>
 
-  <!-- Conversations (shared source of truth for the checkbox lists below) -->
+    <!-- Scrape (conversation list + scraper) -->
+    <div class="panel-page" id="page-scrape">
+      <div class="page-head"><h1 data-i18n="navScrape">采集</h1><p data-i18n="convListHint">点击"刷新会话列表"从抖音加载全部会话，然后在下方勾选需要采集的会话。</p></div>
   <div class="section">
     <h2><span data-i18n="convListTitle">会话列表</span> <span class="status status-idle" id="discoverStatus" data-i18n="idle">闲置</span></h2>
     <div class="row">
@@ -469,8 +391,6 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     <div class="meta" id="discoverHint" style="margin-top:6px;" data-i18n="convListHint">点击"刷新会话列表"从抖音加载全部会话，然后在下方采集/导出/定时各节勾选需要处理的会话。</div>
     <div class="log-box" id="discoverLog"></div>
   </div>
-
-  <!-- Scraper -->
   <div class="section">
     <h2><span data-i18n="scraperTitle">采集</span> <span class="status status-idle" id="scrapeStatus" data-i18n="idle">闲置</span></h2>
     <div class="row">
@@ -495,8 +415,11 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     <div class="meta" id="scrapeTime"></div>
     <div class="log-box" id="scrapeLog"></div>
   </div>
+    </div>
 
-  <!-- Schedule -->
+    <!-- Schedule -->
+    <div class="panel-page" id="page-schedule">
+      <div class="page-head"><h1 data-i18n="scheduleTitle">定时任务</h1></div>
   <div class="section">
     <h2 data-i18n="scheduleTitle">定时任务</h2>
     <div class="schedule-row">
@@ -531,8 +454,11 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     <div class="conv-list-box" id="scheduleConvList"></div>
     <div class="meta" id="scheduleMeta" style="margin-top:6px;"></div>
   </div>
+    </div>
 
-  <!-- Export -->
+    <!-- Export (export + media) -->
+    <div class="panel-page" id="page-export">
+      <div class="page-head"><h1 data-i18n="exportTitle">导出</h1></div>
   <div class="section">
     <h2><span data-i18n="exportTitle">导出</span> <span class="status status-idle" id="exportStatus" data-i18n="idle">闲置</span></h2>
     <div class="row">
@@ -554,8 +480,6 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     <div class="conv-list-box" id="exportConvList"></div>
     <div class="meta" id="exportMsg"></div>
   </div>
-
-  <!-- Media download -->
   <div class="section">
     <h2 data-i18n="mediaTitle">媒体下载</h2>
     <div class="meta" style="margin-bottom:10px" data-i18n="mediaDesc">将图片/表情包下载到本地，避免抖音 CDN 链接过期后无法显示。</div>
@@ -575,7 +499,50 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     </div>
     <div class="meta" id="videoBackfillMsg" style="margin-top:6px"></div>
   </div>
+    </div>
 
+    <!-- Login -->
+    <div class="panel-page" id="page-login">
+      <div class="page-head"><h1 data-i18n="loginTitle">登录</h1></div>
+  <div class="section" id="loginSection">
+    <h2><span data-i18n="loginTitle">登录</span> <span class="status status-idle" id="loginStatus" data-i18n="checking">检测中...</span></h2>
+    <div id="loginInfo" class="meta" style="margin-bottom:10px"></div>
+    <div class="row">
+      <button class="btn btn-primary" id="loginBtn" onclick="startLogin()" data-i18n="scanQr">扫码登录</button>
+      <button class="btn btn-danger" id="loginCancelBtn" onclick="cancelLogin()" style="display:none" data-i18n="cancel">取消</button>
+      <button class="btn btn-primary" onclick="toggleCookieImport()" data-i18n="importCookie">导入 Cookie</button>
+      <button class="btn btn-outline btn-sm" onclick="clearLogin()" data-i18n="clearSession">清除会话</button>
+    </div>
+    <div id="cookieImportArea" class="cookie-import-area">
+      <div class="cookie-import-hint" id="cookieImportHint"></div>
+      <textarea id="cookieInput" data-i18n-placeholder="cookiePlaceholder" placeholder="粘贴 Cookie 内容..."></textarea>
+      <div class="row" style="margin-top:10px;">
+        <button class="btn btn-primary btn-sm" id="cookieImportBtn" onclick="importCookie()" data-i18n="importBtn">导入</button>
+        <button class="btn btn-outline btn-sm" onclick="toggleCookieImport()" data-i18n="cancel">取消</button>
+      </div>
+      <div class="cookie-import-feedback" id="cookieImportFeedback"></div>
+    </div>
+    <div id="loginScreenshot" style="display:none;margin-top:14px;position:relative;user-select:none;">
+      <div style="font-size:11px;color:var(--text3);margin-bottom:6px;" data-i18n="clickScreenshotHint">点击截图进行交互。下方输入文本后回车发送。</div>
+      <div style="text-align:center;">
+        <img id="loginImg" style="max-width:100%;border-radius:8px;border:1px solid var(--border);cursor:crosshair;"
+             onmousedown="imgMouseDown(event)" onmousemove="imgMouseMove(event)" onmouseup="imgMouseUp(event)"
+             ondragstart="return false" />
+      </div>
+      <div style="display:flex;gap:8px;margin-top:10px;align-items:center;">
+        <input type="text" id="loginKeyInput" data-i18n-placeholder="typeAndEnter" placeholder="输入文字后回车发送..."
+               style="flex:1;" onkeydown="loginKeyDown(event)" autocomplete="off" />
+        <button class="btn btn-outline btn-sm" onclick="sendLoginKey('Backspace')">⌫</button>
+        <button class="btn btn-outline btn-sm" onclick="sendLoginKey('Tab')">Tab</button>
+        <button class="btn btn-outline btn-sm" onclick="sendLoginKey('Enter')">Enter</button>
+      </div>
+    </div>
+  </div>
+    </div>
+
+    <!-- Settings (password + notify) -->
+    <div class="panel-page" id="page-settings">
+      <div class="page-head"><h1 data-i18n="navSettings">设置</h1></div>
   <div class="section">
     <h2 data-i18n="passwordTitle">密码</h2>
     <div class="meta" style="margin-bottom:8px" data-i18n="passwordDesc">设置密码以保护聊天查看器和控制面板。</div>
@@ -586,7 +553,6 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     </div>
     <div class="meta" id="pwStatus" style="margin-top:6px"></div>
   </div>
-
   <div class="section">
     <h2 data-i18n="notifyTitle">通知</h2>
     <div class="meta" style="margin-bottom:8px">
@@ -601,7 +567,9 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     </div>
     <div class="meta" id="notifyStatus" style="margin-top:6px"></div>
   </div>
+    </div>
 
+  </main>
 </div>
 
 <script>
@@ -609,6 +577,8 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 const T = {
   zh: {
     appTitle: '抖音聊天记录导出',
+    navOverview: '概览', navScrape: '采集', navSchedule: '定时', navExport: '导出', navLogin: '登录', navSettings: '设置',
+    overviewDesc: '导出统计与快捷状态。',
     chatViewer: '聊天查看器 →',
     panelTitle: '控制面板',
     enterPasswordPrompt: '请输入密码',
@@ -704,6 +674,8 @@ const T = {
   },
   en: {
     appTitle: 'Douyin Chat Export',
+    navOverview: 'Overview', navScrape: 'Scrape', navSchedule: 'Schedule', navExport: 'Export', navLogin: 'Login', navSettings: 'Settings',
+    overviewDesc: 'Export stats and quick status.',
     chatViewer: 'Chat Viewer →',
     panelTitle: 'Control Panel',
     enterPasswordPrompt: 'Please enter password',
@@ -845,6 +817,13 @@ function setTheme(t) {
   const saved = localStorage.getItem('panel-theme');
   if (saved) setTheme(saved);
 })();
+
+/* ── Sidebar navigation: show one page, remember the last ── */
+function showPage(id) {
+  document.querySelectorAll('.panel-page').forEach(p => p.classList.toggle('active', p.id === 'page-' + id));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.toggle('active', n.dataset.page === id));
+  localStorage.setItem('panel-page', id);
+}
 
 /* ── Conversation selection state ── */
 let discoveredConvs = [];     // [{nickname, name, time, preview}, ...]
@@ -1615,6 +1594,7 @@ window.fetch = function(url, opts) {
 };
 
 applyI18n();
+showPage(localStorage.getItem('panel-page') || 'overview');
 panelAuthCheck();
 </script>
 </body>
