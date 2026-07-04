@@ -80,8 +80,21 @@ export function getStickerUrl(msg) {
   return null
 }
 
+// "一起看视频" 邀请卡片 (aweType=9000)：msg_type=0，但不是普通系统提示，
+// 单独渲染成卡片。返回 {title, subtitle, cover} 或 null。
+export function getWatchTogether(msg) {
+  const cj = getContentJson(msg) || tryParseJson(msg.content)
+  if (!cj || cj.aweType !== 9000) return null
+  return {
+    title: cj.title || '一起看视频',
+    subtitle: cj.sub_title || cj.hint || '',
+    cover: cj.cover_url?.url_list?.[0] || '',
+  }
+}
+
 // Whether a message should render at all (empty system messages are hidden).
 export function shouldShow(msg) {
+  if (getWatchTogether(msg)) return true       // 一起看视频卡片始终显示
   if (msg.msg_type === 0) return !!renderSystemMsg(msg)
   if (isJsonSystemMsg(msg)) return !!renderSystemMsg(msg)
   return true
@@ -105,7 +118,8 @@ export function renderSystemMsg(msg) {
   }
   if (source.hint_text) return source.hint_text
   if (Object.keys(source).length <= 1) return ''
-  return (msg.content && msg.content !== '{}') ? msg.content : ''
+  // 兜底：不认识的 JSON 卡片消息不要把原始 JSON 吐到界面上；只回显纯文本 content。
+  return (msg.content && msg.content !== '{}' && !msg.content.startsWith('{')) ? msg.content : ''
 }
 
 // Extract server_message_id from the raw JSON string (avoids JSON.parse losing

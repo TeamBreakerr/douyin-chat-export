@@ -100,6 +100,13 @@ def test_system_message_text_variants():
     assert _system_message_text(None, {"aweType": 193}) == "[通话成功]"
 
 
+def test_watch_together_not_mislabeled_as_video_call():
+    # aweType=9000 "邀你一起看视频" must not fall into the "看视频" -> 视频通话 heuristic
+    cj = {"aweType": 9000, "title": "邀你一起看视频", "sub_title": "加入和我一起看"}
+    assert _system_message_text(None, cj) == "[一起看视频] 邀你一起看视频"
+    assert _system_message_text(None, {"aweType": 9000}) == "[一起看视频]"
+
+
 # ── full export against a synthetic DB ──
 
 def _raw(cj: dict) -> str:

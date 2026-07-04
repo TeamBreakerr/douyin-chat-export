@@ -105,6 +105,11 @@ def _system_message_text(content: str | None, cj: dict | None = None) -> str:
             obj = None
     if not obj:
         return "[系统消息]"
+    # 一起看视频邀请 (aweType=9000) 优先处理：它带 title="邀你一起看视频"，
+    # 会被 _render_template_tips 的 title 兜底 + 下面的 "看视频" 启发式双重误判。
+    if obj.get("aweType") == 9000:
+        title = (obj.get("title") or "").strip()
+        return f"[一起看视频] {title}".strip() if title else "[一起看视频]"
     rendered = _render_template_tips(obj)
     if rendered:
         return f"[系统] {rendered}"

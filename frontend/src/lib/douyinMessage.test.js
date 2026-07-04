@@ -4,6 +4,7 @@ import {
   isJsonSticker, isJsonSystemMsg, isVoiceMsg, getVoiceDuration, getVoiceUrl,
   isVideoMsg, isJsonVideo, getVideoDuration, getInlinePic, getImageSrc, getEmojiSrc,
   getRefMsg, getRefContent, getRefNickname, extractServerMsgIds, isRecalled,
+  getWatchTogether,
 } from './douyinMessage.js'
 
 // Build a message row. content_json is double-encoded inside raw_data, like the DB.
@@ -107,6 +108,31 @@ describe('reply/quote', () => {
   it('old format maps emoji/share content_json', () => {
     expect(getRefContent({ content_json: JSON.stringify({ aweType: 501 }) })).toBe('[表情]')
     expect(getRefContent({ content_json: JSON.stringify({ content_title: 'T' }) })).toBe('[分享] T')
+  })
+})
+
+describe('watch-together invite (aweType 9000)', () => {
+  const cj = { aweType: 9000, title: '邀你一起看视频', sub_title: '加入和我一起看',
+               cover_url: { url_list: ['http://c/card.png'] }, room_id: 123 }
+  it('getWatchTogether pulls title/subtitle/cover, null otherwise', () => {
+    const wt = getWatchTogether(withCj(cj, { msg_type: 0 }))
+    expect(wt).toEqual({ title: '邀你一起看视频', subtitle: '加入和我一起看', cover: 'http://c/card.png' })
+    expect(getWatchTogether(msg({ msg_type: 0, content: 'hi' }))).toBeNull()
+  })
+  it('is shown (not hidden as an empty system message)', () => {
+    expect(shouldShow(withCj(cj, { msg_type: 0 }))).toBe(true)
+  })
+  it('also detected when the JSON is only in content', () => {
+    expect(getWatchTogether(msg({ msg_type: 0, content: JSON.stringify(cj) }))).not.toBeNull()
+  })
+})
+
+describe('renderSystemMsg never leaks raw JSON', () => {
+  it('unrecognized JSON card -> empty string, not the raw JSON', () => {
+    expect(renderSystemMsg(msg({ msg_type: 0, content: '{"aweType":9000,"title":"x"}' }))).toBe('')
+  })
+  it('plain text system content still shows', () => {
+    expect(renderSystemMsg(msg({ msg_type: 0, content: '你已添加对方为好友' }))).toBe('你已添加对方为好友')
   })
 })
 

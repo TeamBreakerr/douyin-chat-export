@@ -62,7 +62,15 @@
           <!-- 系统消息居中显示 -->
           <template v-if="(msg.msg_type === 0 && !isVoiceMsg(msg)) || isJsonSystemMsg(msg)">
             <div class="msg-system-block">
-              <div class="msg-system-text" @contextmenu="selectSystemContent">{{ renderSystemMsg(msg) }}</div>
+              <!-- 一起看视频邀请卡片 (aweType=9000) -->
+              <div v-if="getWatchTogether(msg)" class="msg-watch-card">
+                <div class="msg-watch-icon">▶</div>
+                <div class="msg-watch-body">
+                  <div class="msg-watch-title">{{ getWatchTogether(msg).title }}</div>
+                  <div v-if="getWatchTogether(msg).subtitle" class="msg-watch-sub">{{ getWatchTogether(msg).subtitle }}</div>
+                </div>
+              </div>
+              <div v-else class="msg-system-text" @contextmenu="selectSystemContent">{{ renderSystemMsg(msg) }}</div>
               <!-- 引用的分享视频卡片 -->
               <div
                 v-if="sysRefCache[msg.msg_id]"
@@ -230,7 +238,7 @@ import { resolveAvatarUrl } from '@/lib/media'
 import MessageLightbox from './MessageLightbox.vue'
 import {
   clearCjCache, getContentJson, tryParseJson, tryParseShareContent, extractShareTitle,
-  isJsonSystemMsg, isJsonSticker, getStickerUrl, shouldShow, renderSystemMsg,
+  isJsonSystemMsg, isJsonSticker, getStickerUrl, shouldShow, renderSystemMsg, getWatchTogether,
   extractServerMsgIds, isVideoComment, isJsonShare, getShareInfo, getInlinePic,
   isVideoMsg, hasLocalVideo, isJsonVideo, getVideoPoster, getVideoDuration,
   getImageSrc, getEmojiSrc, isRecalled, isVoiceMsg, getVoiceUrl, getVoiceDuration,
@@ -807,6 +815,40 @@ watch(() => props.jumpToSeq, async (seq) => {
   padding: 4px 14px;
   border-radius: 999px;
   text-align: center;
+}
+/* 一起看视频邀请卡片 */
+.msg-watch-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 14px 8px 10px;
+  background: color-mix(in srgb, var(--accent) 10%, var(--bg-secondary));
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, transparent);
+  border-radius: var(--radius);
+  max-width: 280px;
+}
+.msg-watch-icon {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-left: 2px;
+}
+.msg-watch-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.msg-watch-sub {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 1px;
 }
 .msg-system-ref {
   display: flex;
