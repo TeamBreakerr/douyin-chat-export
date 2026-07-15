@@ -29,6 +29,8 @@ def test_route_surface_unchanged():
 
 def test_panel_html_byte_identical():
     client = TestClient(main.app)
-    body = client.get("/panel").content
+    response = client.get("/panel")
+    body = response.content
     expected = open(os.path.join(_BASELINE, "panel.html"), "rb").read()
     assert body == expected
+    assert "charset=utf-8" in response.headers["content-type"].lower()

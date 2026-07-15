@@ -32,6 +32,25 @@ def _save_config(cfg):
     _cfg.save_config(cfg)
 
 
+def _utf8_subprocess_env() -> dict:
+    """Force redirected Python child output to UTF-8 on Windows."""
+    env = os.environ.copy()
+    env["PYTHONUTF8"] = "1"
+    env["PYTHONIOENCODING"] = "utf-8"
+    env["PYTHONUNBUFFERED"] = "1"
+    return env
+
+
+def _read_utf8_or_gbk(path: str) -> str:
+    """Read new UTF-8 logs and legacy Windows GBK/GB18030 logs safely."""
+    with open(path, "rb") as file:
+        raw = file.read()
+    try:
+        return raw.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return raw.decode("gb18030", errors="replace")
+
+
 def _clamp_asr_batch_size(value, minimum: int = 2) -> int:
     try:
         parsed = int(value)
@@ -459,7 +478,10 @@ async def _run_video_backfill():
 @control_router.get("", response_class=HTMLResponse)
 @control_router.get("/", response_class=HTMLResponse)
 async def panel_page():
-    return PANEL_HTML
+    return HTMLResponse(
+        content=PANEL_HTML,
+        headers={"Content-Type": "text/html; charset=utf-8"},
+    )
 
 
 @control_router.get("/api/status")
@@ -570,12 +592,13 @@ async def _run_scrape(cmd):
     _scrape_state["stopped"] = False
     try:
         os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-        with open(LOG_PATH, "w") as log_file:
+        with open(LOG_PATH, "w", encoding="utf-8", newline="") as log_file:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=log_file,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=os.path.dirname(os.path.dirname(__file__)),
+                env=_utf8_subprocess_env(),
             )
             _scrape_state["process"] = proc
             await proc.wait()
@@ -609,8 +632,7 @@ async def scrape_log(lines: int = 50):
     if not os.path.exists(LOG_PATH):
         return {"log": ""}
     try:
-        with open(LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
-            all_lines = f.readlines()
+        all_lines = _read_utf8_or_gbk(LOG_PATH).splitlines(keepends=True)
         tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
         return {"log": "".join(tail)}
     except Exception:
@@ -622,8 +644,7 @@ async def discover_log(lines: int = 80):
     if not os.path.exists(DISCOVER_LOG_PATH):
         return {"log": ""}
     try:
-        with open(DISCOVER_LOG_PATH, "r", encoding="utf-8", errors="replace") as f:
-            all_lines = f.readlines()
+        all_lines = _read_utf8_or_gbk(DISCOVER_LOG_PATH).splitlines(keepends=True)
         tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
         return {"log": "".join(tail)}
     except Exception:
@@ -753,12 +774,15 @@ async def _run_discover(cmd):
     proc = None
     try:
         os.makedirs(os.path.dirname(DISCOVER_LOG_PATH), exist_ok=True)
-        with open(DISCOVER_LOG_PATH, "w") as log_file:
+        with open(
+            DISCOVER_LOG_PATH, "w", encoding="utf-8", newline=""
+        ) as log_file:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=log_file,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=os.path.dirname(os.path.dirname(__file__)),
+                env=_utf8_subprocess_env(),
             )
             _discover_state["process"] = proc
             await proc.wait()
