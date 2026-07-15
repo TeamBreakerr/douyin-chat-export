@@ -1,8 +1,8 @@
 # Attribution / 归属说明
 
-本项目基于 [TeamBreakerr/douyin-chat-export](https://github.com/TeamBreakerr/douyin-chat-export) 二次开发。
+本项目基于 [TeamBreakerr/douyin-chat-export](https://github.com/TeamBreakerr/douyin-chat-export) 二次开发修复版。
 
-## 主要修改
+## 主要修改 (Fixed)
 
 - **修复 sessionid cookie 空值判断 bug**：原代码在检测 `sessionid` cookie 时仅检查名称存在，未验证 value 是否非空，导致 LevelDB 中空值 sessionid 被错误识别为有效，引发 0 条消息拉取问题
 - **login.py cookie 刷新修复**：添加 5 秒等待确保 Chromium 将 sessionid 刷新到 LevelDB，并导出 JSON 备份
