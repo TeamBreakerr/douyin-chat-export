@@ -11,6 +11,11 @@ services:
       - SCRAPER_INCREMENTAL=true    # incremental by default
       - SCRAPER_FILTER=             # empty = all conversations
       - SCRAPER_SCHEDULE=           # cron expr, e.g. "0 */6 * * *" (empty = no schedule)
+      - QWEN_ASR_URL=${QWEN_ASR_URL:-}                 # optional, e.g. http://qwen3-asr:8000
+      - QWEN_ASR_LANGUAGE=${QWEN_ASR_LANGUAGE-Chinese}  # empty = auto detect
+      - QWEN_ASR_PROMPT=${QWEN_ASR_PROMPT:-}           # optional names/domain terms
+      - QWEN_ASR_TIMEOUT=${QWEN_ASR_TIMEOUT:-300}       # seconds per request
+      - QWEN_ASR_BATCH_SIZE=${QWEN_ASR_BATCH_SIZE:-10}  # max 10 uploaded files per batch
     restart: unless-stopped
     networks:
       - web-internal

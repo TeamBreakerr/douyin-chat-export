@@ -131,12 +131,21 @@ body {
 .row + .row { margin-top: 10px; }
 
 /* ── Form controls ── */
-select, input[type=text], input[type=password] {
+select, input[type=text], input[type=password], input[type=number] {
   background: var(--bg3); border: 1px solid var(--border); color: var(--text);
   padding: 8px 12px; border-radius: 9px; font-size: 13px; outline: none;
   transition: border-color 0.15s, box-shadow 0.15s;
 }
 select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
+
+.progress-track {
+  height: 9px; margin-top: 12px; overflow: hidden; border-radius: 999px;
+  background: var(--bg3); border: 1px solid var(--border);
+}
+.progress-fill {
+  height: 100%; width: 0; border-radius: inherit; background: var(--accent);
+  transition: width 0.25s ease;
+}
 
 .btn {
   padding: 8px 18px; border: none; border-radius: 9px; font-size: 13px;
@@ -460,6 +469,54 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     <div class="panel-page" id="page-export">
       <div class="page-head"><h1 data-i18n="exportTitle">导出</h1></div>
   <div class="section">
+    <h2><span data-i18n="voiceRecognitionTitle">语音识别</span> <span class="status status-idle" id="voiceRecognitionStatus" data-i18n="idle">闲置</span></h2>
+    <div class="meta" style="margin-bottom:12px" data-i18n="voiceRecognitionDesc">独立识别所选会话的本地语音并保存结果，导出时会直接复用。</div>
+    <div class="row">
+      <input type="text" id="asrUrlInput" data-i18n-placeholder="asrUrlPlaceholder"
+             placeholder="ASR 服务地址，例如 http://127.0.0.1:8000" style="flex:1;min-width:260px;">
+      <select id="asrLanguage">
+        <option value="Chinese" data-i18n="asrLanguageChinese">中文</option>
+        <option value="" data-i18n="asrLanguageAuto">自动检测语言</option>
+        <option value="English">English</option>
+        <option value="Cantonese">Cantonese</option>
+      </select>
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <input type="text" id="asrPromptInput" data-i18n-placeholder="asrPromptPlaceholder"
+             placeholder="可选：输入人名、专有词等识别提示" style="flex:1;min-width:300px;">
+    </div>
+    <div class="row" style="margin-top:10px;">
+      <label class="conv-check" style="cursor:pointer;padding-left:0;">
+        <input type="checkbox" id="asrUseBatchToggle" onchange="toggleAsrBatchFields()" checked>
+        <span data-i18n="asrUseBatch">使用批量接口</span>
+      </label>
+      <label class="row" style="gap:6px;">
+        <span class="meta" style="margin:0" data-i18n="asrBatchSize">每批数量</span>
+        <input type="number" id="asrBatchSizeInput" value="10" min="2" max="10" step="1" style="width:72px;">
+        <span class="meta" style="margin:0" data-i18n="asrBatchUnit">条（最多 10）</span>
+      </label>
+      <label class="conv-check" style="cursor:pointer;">
+        <input type="checkbox" id="forceRecognitionToggle">
+        <span data-i18n="forceRecognition">重新识别已有结果</span>
+      </label>
+      <button class="btn btn-primary" id="voiceRecognitionBtn" onclick="startVoiceRecognition()" data-i18n="voiceRecognitionBtn">开始识别</button>
+    </div>
+    <div class="conv-list-toolbar" style="margin-top:12px;">
+      <span data-i18n="selectConvsLabel">选择会话:</span>
+      <a href="#" onclick="selectAllConvs('recognition',true);return false;" data-i18n="selectAll">全选</a>
+      <span class="sep">·</span>
+      <a href="#" onclick="selectAllConvs('recognition',false);return false;" data-i18n="selectNone">清空</a>
+      <span class="sep">·</span>
+      <span id="recognitionConvCount">0 / 0</span>
+    </div>
+    <div class="conv-list-box" id="recognitionConvList"></div>
+    <div class="progress-track" id="voiceRecognitionProgressTrack" style="display:none;">
+      <div class="progress-fill" id="voiceRecognitionProgress"></div>
+    </div>
+    <div class="meta" id="voiceRecognitionProgressText"></div>
+    <div class="meta" id="voiceRecognitionMsg"></div>
+  </div>
+  <div class="section">
     <h2><span data-i18n="exportTitle">导出</span> <span class="status status-idle" id="exportStatus" data-i18n="idle">闲置</span></h2>
     <div class="row">
       <select id="exportFormat">
@@ -469,6 +526,13 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
       <button class="btn btn-primary" id="exportBtn" onclick="startExport()" data-i18n="exportBtn">导出</button>
       <a class="btn btn-success" id="downloadBtn" style="display:none;text-decoration:none" href="/panel/api/export/download" data-i18n="download">下载</a>
     </div>
+    <div class="row" style="margin-top:12px;">
+      <label class="conv-check" style="cursor:pointer;padding-left:0;">
+        <input type="checkbox" id="transcribeVoiceToggle">
+        <span data-i18n="transcribeVoice">导出时识别尚未缓存的语音</span>
+      </label>
+    </div>
+    <div class="meta" data-i18n="asrDesc">已保存的识别结果始终会写入导出；开启此项后只补识别尚未缓存的语音。</div>
     <div class="conv-list-toolbar" style="margin-top:10px;">
       <span data-i18n="selectConvsLabel">选择会话:</span>
       <a href="#" onclick="selectAllConvs('export',true);return false;" data-i18n="selectAll">全选</a>
@@ -595,7 +659,7 @@ const T = {
     typeAndEnter: '输入文字后回车发送...',
     convListTitle: '会话列表',
     refreshConvList: '刷新会话列表',
-    convListHint: '点击"刷新会话列表"从抖音加载全部会话，然后在下方采集/导出/定时各节勾选需要处理的会话。',
+    convListHint: '点击"刷新会话列表"从抖音加载全部会话，然后在下方采集/识别/导出/定时各节勾选需要处理的会话。',
     scraperTitle: '采集',
     incremental: '增量',
     full: '全量',
@@ -614,6 +678,23 @@ const T = {
     exportTitle: '导出',
     exportBtn: '导出',
     download: '下载',
+    voiceRecognitionTitle: '语音识别',
+    voiceRecognitionDesc: '独立识别所选会话的本地语音并保存结果，导出时会直接复用。未选择会话时处理最近会话。',
+    voiceRecognitionBtn: '开始识别',
+    forceRecognition: '重新识别已有结果',
+    asrUseBatch: '使用批量接口',
+    asrBatchSize: '每批数量',
+    asrBatchUnit: '条（最多 10）',
+    transcribeVoice: '导出时识别尚未缓存的语音',
+    asrUrlPlaceholder: 'ASR 服务地址，例如 http://127.0.0.1:8000',
+    asrLanguageChinese: '中文',
+    asrLanguageAuto: '自动检测语言',
+    asrPromptPlaceholder: '可选：输入人名、专有词等识别提示',
+    asrDesc: '已保存的识别结果始终会写入导出；开启此项后只补识别尚未缓存的语音。',
+    asrUrlRequired: '启用语音转写时必须填写 ASR 服务地址',
+    voiceRecognitionProgress: (done, total, ok, fail, missing, skipped, empty) => `进度 ${done} / ${total} · 成功 ${ok} · 失败 ${fail} · 缺文件 ${missing} · 跳过缓存 ${skipped} · 空结果 ${empty}`,
+    voiceRecognitionStartFailed: '启动语音识别失败',
+    exportRequestFailed: '导出请求失败',
     passwordTitle: '密码',
     passwordDesc: '设置密码以保护聊天查看器和控制面板。',
     enterPassword: '输入密码',
@@ -692,7 +773,7 @@ const T = {
     typeAndEnter: 'Type here and press Enter to send...',
     convListTitle: 'Conversations',
     refreshConvList: 'Refresh conversation list',
-    convListHint: 'Click "Refresh conversation list" to load all conversations from Douyin, then check the ones you want in each section below.',
+    convListHint: 'Click "Refresh conversation list" to load all conversations from Douyin, then choose items independently for scrape, recognition, export, and schedule.',
     scraperTitle: 'Scraper',
     incremental: 'Incremental',
     full: 'Full',
@@ -711,6 +792,23 @@ const T = {
     exportTitle: 'Export',
     exportBtn: 'Export',
     download: 'Download',
+    voiceRecognitionTitle: 'Voice Recognition',
+    voiceRecognitionDesc: 'Recognize and save local voice messages for the selected conversations. Exports reuse saved results. With no selection, the latest conversation is used.',
+    voiceRecognitionBtn: 'Start recognition',
+    forceRecognition: 'Re-recognize saved results',
+    asrUseBatch: 'Use batch endpoint',
+    asrBatchSize: 'Batch size',
+    asrBatchUnit: 'items (max 10)',
+    transcribeVoice: 'Recognize uncached voice during export',
+    asrUrlPlaceholder: 'ASR server URL, e.g. http://127.0.0.1:8000',
+    asrLanguageChinese: 'Chinese',
+    asrLanguageAuto: 'Auto-detect language',
+    asrPromptPlaceholder: 'Optional: names and domain terms to recognize',
+    asrDesc: 'Saved results are always exported. Enable this only to recognize voice messages that are not cached yet.',
+    asrUrlRequired: 'Enter an ASR server URL when voice transcription is enabled',
+    voiceRecognitionProgress: (done, total, ok, fail, missing, skipped, empty) => `Progress ${done} / ${total} · ${ok} ok · ${fail} failed · ${missing} missing · ${skipped} cached · ${empty} empty`,
+    voiceRecognitionStartFailed: 'Failed to start voice recognition',
+    exportRequestFailed: 'Export request failed',
     passwordTitle: 'Password',
     passwordDesc: 'Set a password to protect the chat viewer and panel.',
     enterPassword: 'Enter password',
@@ -831,10 +929,12 @@ let discoveredAt = 0;
 let selectedMap = {           // section -> Set of nicknames
   scraper: new Set(),
   export: new Set(),
+  recognition: new Set(),
   schedule: new Set(),
 };
 let lastDiscoverStatus = 'idle';
 let lastDiscoverMsg = '';
+let asrConfigLoaded = false;
 
 async function loadStatus() {
   try {
@@ -867,6 +967,18 @@ async function loadStatus() {
     document.getElementById('exportBtn').disabled = es.status === 'running';
     document.getElementById('exportMsg').textContent = es.message || '';
     document.getElementById('downloadBtn').style.display = (es.status === 'completed' && es.file_path) ? '' : 'none';
+    if (!asrConfigLoaded) {
+      const asr = es.asr || {};
+      document.getElementById('transcribeVoiceToggle').checked = !!asr.enabled;
+      document.getElementById('asrUrlInput').value = asr.url || '';
+      document.getElementById('asrLanguage').value = asr.language ?? 'Chinese';
+      document.getElementById('asrPromptInput').value = asr.prompt || '';
+      document.getElementById('asrUseBatchToggle').checked = asr.use_batch !== false;
+      document.getElementById('asrBatchSizeInput').value = Math.max(2, Math.min(10, Number(asr.batch_size) || 10));
+      asrConfigLoaded = true;
+      toggleAsrBatchFields();
+    }
+    renderVoiceRecognitionStatus(d.voice_recognition || {});
 
     // Schedule status
     const sch = d.scheduler;
@@ -916,6 +1028,7 @@ async function loadSelections() {
     const d = await r.json();
     selectedMap.scraper = new Set(d.scraper || []);
     selectedMap.export = new Set(d.export || []);
+    selectedMap.recognition = new Set(d.recognition || []);
     selectedMap.schedule = new Set(d.schedule || []);
   } catch {}
 }
@@ -946,7 +1059,7 @@ function renderDiscoverMeta() {
 }
 
 function renderAllConvLists() {
-  ['scrape', 'schedule', 'export'].forEach(prefix => renderConvList(prefix));
+  ['scrape', 'schedule', 'recognition', 'export'].forEach(prefix => renderConvList(prefix));
   renderConvCounts();
 }
 
@@ -987,7 +1100,7 @@ function renderConvList(prefix) {
 }
 
 function renderConvCounts() {
-  ['scrape', 'schedule', 'export'].forEach(prefix => {
+  ['scrape', 'schedule', 'recognition', 'export'].forEach(prefix => {
     const el = document.getElementById(prefix + 'ConvCount');
     if (!el) return;
     el.textContent = t('convsCount', selectedMap[sectionKey(prefix)].size, discoveredConvs.length);
@@ -1148,19 +1261,125 @@ async function updateSchedule() {
   loadStatus();
 }
 
+function toggleAsrBatchFields() {
+  document.getElementById('asrBatchSizeInput').disabled = !document.getElementById('asrUseBatchToggle').checked;
+}
+
+function getAsrBatchSize() {
+  const input = document.getElementById('asrBatchSizeInput');
+  const value = Math.max(2, Math.min(10, Number.parseInt(input.value, 10) || 10));
+  input.value = value;
+  return value;
+}
+
+let voiceRecognitionPollTimer = null;
+
+function renderVoiceRecognitionStatus(d) {
+  const status = d.status || 'idle';
+  setStatusEl(document.getElementById('voiceRecognitionStatus'), status);
+  const running = status === 'running';
+  const exportRunning = document.getElementById('exportStatus').classList.contains('status-running');
+  document.getElementById('voiceRecognitionBtn').disabled = running || exportRunning;
+  if (running) document.getElementById('exportBtn').disabled = true;
+  const total = Number(d.total) || 0;
+  const done = Number(d.done) || 0;
+  const showProgress = status !== 'idle' || total > 0;
+  document.getElementById('voiceRecognitionProgressTrack').style.display = showProgress ? '' : 'none';
+  document.getElementById('voiceRecognitionProgress').style.width = (total ? Math.min(100, done * 100 / total) : 0) + '%';
+  setDynText(
+    document.getElementById('voiceRecognitionProgressText'),
+    showProgress ? t('voiceRecognitionProgress', done, total, d.ok || 0, d.failed || 0, d.missing || 0, d.skipped || 0, d.empty || 0) : ''
+  );
+  setDynText(document.getElementById('voiceRecognitionMsg'), d.message || '');
+  if (running && !voiceRecognitionPollTimer) {
+    voiceRecognitionPollTimer = setInterval(pollVoiceRecognition, 1000);
+  } else if (!running && voiceRecognitionPollTimer) {
+    clearInterval(voiceRecognitionPollTimer);
+    voiceRecognitionPollTimer = null;
+  }
+}
+
+async function pollVoiceRecognition() {
+  try {
+    const r = await fetch('/panel/api/voice-recognition/status');
+    const d = await r.json();
+    renderVoiceRecognitionStatus(d);
+  } catch (e) { console.error('Voice recognition status failed:', e); }
+}
+
+async function startVoiceRecognition() {
+  const asr_url = document.getElementById('asrUrlInput').value.trim();
+  if (!asr_url) {
+    setDynText(document.getElementById('voiceRecognitionMsg'), t('asrUrlRequired'));
+    document.getElementById('asrUrlInput').focus();
+    return;
+  }
+  const payload = {
+    conversations: [...selectedMap.recognition],
+    asr_url,
+    asr_language: document.getElementById('asrLanguage').value,
+    asr_prompt: document.getElementById('asrPromptInput').value.trim(),
+    use_batch: document.getElementById('asrUseBatchToggle').checked,
+    batch_size: getAsrBatchSize(),
+    force: document.getElementById('forceRecognitionToggle').checked,
+  };
+  document.getElementById('voiceRecognitionBtn').disabled = true;
+  setStatusEl(document.getElementById('voiceRecognitionStatus'), 'running');
+  try {
+    const r = await fetch('/panel/api/voice-recognition', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload),
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) throw new Error(d.error || t('voiceRecognitionStartFailed'));
+    await pollVoiceRecognition();
+  } catch (e) {
+    setStatusEl(document.getElementById('voiceRecognitionStatus'), 'failed');
+    setDynText(document.getElementById('voiceRecognitionMsg'), t('voiceRecognitionStartFailed') + ': ' + e.message);
+    document.getElementById('voiceRecognitionBtn').disabled = false;
+  }
+}
+
 async function startExport() {
   const format = document.getElementById('exportFormat').value;
   const conversations = [...selectedMap.export];
+  const transcribe_voice = document.getElementById('transcribeVoiceToggle').checked;
+  const asr_url = document.getElementById('asrUrlInput').value.trim();
+  const asr_language = document.getElementById('asrLanguage').value;
+  const asr_prompt = document.getElementById('asrPromptInput').value.trim();
+  const asr_use_batch = document.getElementById('asrUseBatchToggle').checked;
+  const asr_batch_size = getAsrBatchSize();
+  if (transcribe_voice && !asr_url) {
+    document.getElementById('exportMsg').textContent = t('asrUrlRequired');
+    document.getElementById('asrUrlInput').focus();
+    return;
+  }
   if (conversations.length > 1 && !confirm(t('confirmMultiExport', conversations.length))) {
     return;
   }
   document.getElementById('exportBtn').disabled = true;
   setStatusEl(document.getElementById('exportStatus'), 'running');
-  await fetch('/panel/api/export', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ format, conversations }),
-  });
+  try {
+    const r = await fetch('/panel/api/export', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        format, conversations, transcribe_voice, asr_url, asr_language, asr_prompt,
+        asr_use_batch, asr_batch_size,
+      }),
+    });
+    const d = await r.json();
+    if (!r.ok || d.error) {
+      setStatusEl(document.getElementById('exportStatus'), 'failed');
+      document.getElementById('exportMsg').textContent = d.error || t('exportRequestFailed');
+      document.getElementById('exportBtn').disabled = false;
+      return;
+    }
+  } catch (e) {
+    setStatusEl(document.getElementById('exportStatus'), 'failed');
+    document.getElementById('exportMsg').textContent = t('exportRequestFailed') + ': ' + e;
+    document.getElementById('exportBtn').disabled = false;
+    return;
+  }
   loadStatus();
 }
 
@@ -1544,6 +1763,7 @@ async function panelAuthCheck() {
       loadPasswordStatus();
       loadNotifyStatus();
       loadDownloadImages();
+      pollVoiceRecognition();
       pollBackfill();
       loadVideoPending();
       pollVideoBackfill();

@@ -164,6 +164,11 @@ def get_stats():
 def delete_conversation_messages(conv_id):
     """Delete all messages for a conversation (keep the conversation row)."""
     conn = get_db()
+    conn.execute(
+        "DELETE FROM voice_transcriptions WHERE msg_id IN "
+        "(SELECT msg_id FROM messages WHERE conv_id = ?)",
+        (conv_id,),
+    )
     cur = conn.execute("DELETE FROM messages WHERE conv_id = ?", (conv_id,))
     deleted = cur.rowcount
     conn.execute(
@@ -178,6 +183,11 @@ def delete_conversation_messages(conv_id):
 def delete_conversation(conv_id):
     """Delete a conversation and all its messages."""
     conn = get_db()
+    conn.execute(
+        "DELETE FROM voice_transcriptions WHERE msg_id IN "
+        "(SELECT msg_id FROM messages WHERE conv_id = ?)",
+        (conv_id,),
+    )
     msg_cur = conn.execute("DELETE FROM messages WHERE conv_id = ?", (conv_id,))
     msg_deleted = msg_cur.rowcount
     conv_cur = conn.execute("DELETE FROM conversations WHERE conv_id = ?", (conv_id,))

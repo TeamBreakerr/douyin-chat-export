@@ -8,7 +8,14 @@ import re
 import time
 import urllib.parse
 
+from common import paths
+from extractor.asr import ASRResult, QwenASRClient
 from extractor.models import get_db
+from extractor.voice_recognition import (
+    ensure_transcription_table,
+    load_cached_transcription,
+    save_cached_transcription,
+)
 
 # DB msg_type → ChatLab message type
 CHATLAB_TYPE_MAP = {
@@ -209,7 +216,72 @@ def _get_content_json(msg) -> dict | None:
     return None
 
 
-def _resolve_message(msg, cj: dict | None, media_dir: str) -> tuple:
+def _is_voice_message(cj: dict | None) -> bool:
+    """Return whether a content_json object represents a Douyin voice message."""
+    return bool(cj and cj.get("resource_url") and cj.get("duration"))
+
+
+def _voice_label(cj: dict | None) -> str:
+    try:
+        dur_sec = round(float((cj or {}).get("duration") or 0) / 1000)
+    except (TypeError, ValueError):
+        dur_sec = 0
+    return f"[语音 {dur_sec}秒]" if dur_sec else "[语音]"
+
+
+def _voice_content(cj: dict | None, transcription: ASRResult | None) -> str:
+    """Combine the stable voice label with an optional ASR result."""
+    if not transcription or not transcription.text.strip():
+        return _voice_label(cj)
+    emotion = (
+        f"[情绪: {transcription.emotion}] " if transcription.emotion else ""
+    )
+    return f"[语音转文本] {emotion}{transcription.text.strip()}"
+
+
+def _local_media_path(media_dir: str, stored_path: str | None) -> str | None:
+    """Resolve a DB media path written on either Windows or POSIX."""
+    if not stored_path:
+        return None
+    value = os.fspath(stored_path)
+    if os.path.isabs(value):
+        return value if os.path.isfile(value) else None
+    relative = value.replace("\\", os.sep).replace("/", os.sep)
+    candidate = os.path.abspath(os.path.join(media_dir, relative))
+    return candidate if os.path.isfile(candidate) else None
+
+
+def _voice_audio_path(msg, cj: dict | None, media_dir: str) -> str | None:
+    """Find the local audio downloaded by ``WebChatScraper``.
+
+    New rows carry ``media_local_path=voice/<server id>.mpeg``.  The filename
+    fallback also supports older databases where the audio exists but that
+    column was not populated.
+    """
+    stored = _local_media_path(media_dir, msg["media_local_path"])
+    if stored:
+        return stored
+    if not _is_voice_message(cj):
+        return None
+
+    msg_id = str(msg["msg_id"] or "")
+    stem = msg_id[4:] if msg_id.startswith("srv_") else msg_id
+    if not stem:
+        return None
+    voice_dir = os.path.join(media_dir, "voice")
+    for ext in (".mpeg", ".mp3", ".wav", ".m4a", ".mp4", ".aac", ".ogg", ".flac", ".webm"):
+        candidate = os.path.join(voice_dir, stem + ext)
+        if os.path.isfile(candidate):
+            return os.path.abspath(candidate)
+    return None
+
+
+def _resolve_message(
+    msg,
+    cj: dict | None,
+    media_dir: str,
+    voice_transcription: ASRResult | None = None,
+) -> tuple:
     """Decide the ChatLab content + type for one DB message.
 
     Returns (content, chatlab_type, stats) where stats is a dict of counter
@@ -222,15 +294,18 @@ def _resolve_message(msg, cj: dict | None, media_dir: str) -> tuple:
     chatlab_type = CHATLAB_TYPE_MAP.get(msg_type, 99)
     stats: dict = {}
 
-    # 语音消息：msg_type=0 但有 resource_url + duration
-    # 不再嵌 base64 / CDN URL —— 对 LLM 无意义且每条几百 KB；用纯文字标签即可。
+    # 语音消息：msg_type=0 但有 resource_url + duration。音频本身不嵌入
+    # ChatLab；启用 ASR 时在稳定标签后附上转写，失败仍保留原标签。
     is_voice = False
-    if cj and cj.get("resource_url") and cj.get("duration"):
+    if _is_voice_message(cj):
         is_voice = True
         chatlab_type = 0  # TEXT
-        dur_sec = round(cj["duration"] / 1000)
-        content = f"[语音 {dur_sec}秒]" if dur_sec else "[语音]"
+        content = _voice_content(cj, voice_transcription)
         stats["voice"] = 1
+        if voice_transcription and voice_transcription.text.strip():
+            stats["voice_transcribed"] = 1
+        if voice_transcription and voice_transcription.emotion:
+            stats["voice_emotion"] = 1
 
     # 视频消息：msg_type=5 (新分类) 或 cj.video.vid 兜底（老数据）
     is_video = False
@@ -253,18 +328,16 @@ def _resolve_message(msg, cj: dict | None, media_dir: str) -> tuple:
         if msg["media_url"]:
             content = msg["media_url"]
             stats["image"] = 1
-        elif msg["media_local_path"] and os.path.isfile(
-            os.path.join(media_dir, msg["media_local_path"])
-        ):
-            data_url = _file_to_data_url(
-                os.path.join(media_dir, msg["media_local_path"])
-            )
+        else:
+            local_path = _local_media_path(media_dir, msg["media_local_path"])
+            data_url = _file_to_data_url(local_path) if local_path else None
             if data_url:
                 content = data_url
                 stats["image_embedded"] = 1
-            else:
+            elif local_path:
                 chatlab_type = 0
-            stats["image"] = 1
+            if local_path:
+                stats["image"] = 1
 
     # 分享消息：以 cj 的形态判断（含 itemId），不依赖 msg_type。
     # 不要放宽到 aweType / content_title 等字段 —— 表情消息的 cj 也带这些。
@@ -314,10 +387,158 @@ def _build_reply_to(ref_msg_raw) -> dict | None:
         return None
 
 
+def _positive_number(value, default, cast, label):
+    """Parse a positive CLI/environment number with a safe default."""
+    if value is None or str(value).strip() == "":
+        return default
+    try:
+        parsed = cast(value)
+    except (TypeError, ValueError):
+        print(f"[!] {label}={value!r} 无效，使用默认值 {default}")
+        return default
+    if parsed <= 0:
+        print(f"[!] {label} 必须大于 0，使用默认值 {default}")
+        return default
+    return parsed
+
+
 class ChatLabExporter:
-    def __init__(self, conv_name: str = None, output_format: str = "jsonl"):
+    def __init__(
+        self,
+        conv_name: str = None,
+        output_format: str = "jsonl",
+        *,
+        asr_url: str | None = None,
+        asr_language: str | None = None,
+        asr_prompt: str | None = None,
+        asr_timeout: float | None = None,
+        asr_batch_size: int | None = None,
+    ):
         self.conv_name = conv_name
         self.output_format = output_format  # "json" or "jsonl"
+        # Explicit empty URL disables ASR even when the environment has a URL.
+        self.asr_url = (
+            os.environ.get("QWEN_ASR_URL", "") if asr_url is None else asr_url
+        ).strip()
+        self.asr_language = (
+            os.environ.get("QWEN_ASR_LANGUAGE", "Chinese")
+            if asr_language is None
+            else asr_language
+        ).strip() or None
+        self.asr_prompt = (
+            os.environ.get("QWEN_ASR_PROMPT", "")
+            if asr_prompt is None
+            else asr_prompt
+        ).strip()
+        self.asr_timeout = _positive_number(
+            os.environ.get("QWEN_ASR_TIMEOUT") if asr_timeout is None else asr_timeout,
+            300.0,
+            float,
+            "QWEN_ASR_TIMEOUT",
+        )
+        self.asr_batch_size = _positive_number(
+            os.environ.get("QWEN_ASR_BATCH_SIZE")
+            if asr_batch_size is None
+            else asr_batch_size,
+            10,
+            int,
+            "QWEN_ASR_BATCH_SIZE",
+        )
+        self.last_stats: dict = {}
+
+    def _transcribe_voice_messages(
+        self, message_contexts: list[tuple], media_dir: str
+    ) -> tuple[dict[str, ASRResult], dict]:
+        stats = {
+            "enabled": bool(self.asr_url),
+            "voice_messages": 0,
+            "local_audio": 0,
+            "cached": 0,
+            "transcribed": 0,
+            "empty": 0,
+            "failed": 0,
+            "missing": 0,
+        }
+        by_message_id: dict[str, ASRResult] = {}
+        file_to_messages: dict[str, list[str]] = {}
+        cache_conn = get_db()
+        ensure_transcription_table(cache_conn)
+        try:
+            for msg, cj in message_contexts:
+                if not _is_voice_message(cj):
+                    continue
+                stats["voice_messages"] += 1
+                msg_id = str(msg["msg_id"])
+                audio_path = _voice_audio_path(msg, cj, media_dir)
+                cached = load_cached_transcription(cache_conn, msg_id, audio_path)
+                if cached:
+                    by_message_id[msg_id] = cached
+                    stats["cached"] += 1
+                    continue
+                if not self.asr_url:
+                    continue
+                if not audio_path:
+                    stats["missing"] += 1
+                    continue
+                normalized = os.path.abspath(audio_path)
+                file_to_messages.setdefault(normalized, []).append(msg_id)
+                stats["local_audio"] += 1
+
+            if not self.asr_url:
+                return by_message_id, stats
+
+            if not file_to_messages:
+                if stats["voice_messages"] and not stats["cached"]:
+                    print("[!] 已启用语音转写，但没有找到本地语音文件")
+                return by_message_id, stats
+
+            print(
+                f"[*] Qwen3-ASR: 正在转写 {len(file_to_messages)} 个本地语音文件 "
+                f"({self.asr_url})"
+            )
+            try:
+                with QwenASRClient(
+                    self.asr_url,
+                    language=self.asr_language,
+                    prompt=self.asr_prompt,
+                    timeout=self.asr_timeout,
+                    batch_size=self.asr_batch_size,
+                ) as client:
+                    results, errors = client.transcribe_files(file_to_messages)
+            except Exception as exc:
+                # ASR is an optional enrichment. Preserve a usable export if its
+                # URL/config/client fails unexpectedly.
+                message = f"ASR 初始化失败: {exc}"
+                errors = {path: message for path in file_to_messages}
+                results = {}
+
+            for path, message_ids in file_to_messages.items():
+                result = results.get(path)
+                if result and result.text.strip():
+                    for msg_id in message_ids:
+                        by_message_id[msg_id] = result
+                        save_cached_transcription(
+                            cache_conn, msg_id, result, path, self.asr_url
+                        )
+                    cache_conn.commit()
+                    stats["transcribed"] += len(message_ids)
+                elif result:
+                    stats["empty"] += len(message_ids)
+                else:
+                    stats["failed"] += len(message_ids)
+
+            # Log unique file failures, capped so a dead server cannot flood a
+            # control-panel log for a large conversation.
+            for index, (path, reason) in enumerate(errors.items()):
+                if index >= 10:
+                    print(f"  [ASR] 另有 {len(errors) - 10} 个失败未逐条显示")
+                    break
+                print(f"  [ASR] {os.path.basename(path)} 转写失败: {reason}")
+
+            return by_message_id, stats
+        finally:
+            cache_conn.commit()
+            cache_conn.close()
 
     def export(self, output_path: str):
         conn = get_db()
@@ -371,8 +592,15 @@ class ChatLabExporter:
                     name = owner_name if uid == owner_uid else conv_name
                 members_map[uid] = name
 
-        # Media base dir
-        media_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "media")
+        # Media base dir + content_json are resolved once.  Closing the DB
+        # before a potentially long remote ASR call avoids holding a reader
+        # connection for the duration of model inference.
+        media_dir = paths.MEDIA_DIR
+        message_contexts = [(msg, _get_content_json(msg)) for msg in messages]
+        conn.close()
+        voice_transcriptions, asr_stats = self._transcribe_voice_messages(
+            message_contexts, media_dir
+        )
 
         # Build ChatLab structure
         header = {
@@ -399,13 +627,14 @@ class ChatLabExporter:
         image_embedded = 0
         emoji_count = 0
         voice_count = 0
+        voice_transcribed = 0
+        voice_emotion = 0
         video_count = 0
         system_count = 0
         share_normalized = 0
         ref_count = 0
 
-        for msg in messages:
-            cj = _get_content_json(msg)
+        for msg, cj in message_contexts:
 
             # 发送方：从 users_map 获取昵称
             uid = msg["sender_uid"] or ""
@@ -413,8 +642,15 @@ class ChatLabExporter:
             if not display_name:
                 display_name = owner_name if uid == owner_uid else conv_name
 
-            content, chatlab_type, stats = _resolve_message(msg, cj, media_dir)
+            content, chatlab_type, stats = _resolve_message(
+                msg,
+                cj,
+                media_dir,
+                voice_transcriptions.get(str(msg["msg_id"])),
+            )
             voice_count += stats.get("voice", 0)
+            voice_transcribed += stats.get("voice_transcribed", 0)
+            voice_emotion += stats.get("voice_emotion", 0)
             video_count += stats.get("video", 0)
             emoji_count += stats.get("emoji", 0)
             image_count += stats.get("image", 0)
@@ -438,8 +674,6 @@ class ChatLabExporter:
                 ref_count += 1
 
             chatlab_messages.append(chatlab_msg)
-
-        conn.close()
 
         # Write output
         os.makedirs(os.path.dirname(output_path) or ".", exist_ok=True)
@@ -472,7 +706,23 @@ class ChatLabExporter:
         if emoji_count:
             print(f"  表情: {emoji_count} (转为文字标签)")
         if voice_count:
-            print(f"  语音: {voice_count} (转为文字标签)")
+            if asr_stats["enabled"] or asr_stats["cached"]:
+                details = [f"已识别 {voice_transcribed}"]
+                if asr_stats["cached"]:
+                    details.append(f"复用缓存 {asr_stats['cached']}")
+                if asr_stats["transcribed"]:
+                    details.append(f"本次识别 {asr_stats['transcribed']}")
+                if asr_stats["empty"]:
+                    details.append(f"空结果 {asr_stats['empty']}")
+                if asr_stats["failed"]:
+                    details.append(f"失败 {asr_stats['failed']}")
+                if asr_stats["missing"]:
+                    details.append(f"缺少本地文件 {asr_stats['missing']}")
+                if voice_emotion:
+                    details.append(f"含情绪 {voice_emotion}")
+                print(f"  语音: {voice_count} ({', '.join(details)})")
+            else:
+                print(f"  语音: {voice_count} (未启用 ASR，转为文字标签)")
         if video_count:
             print(f"  视频: {video_count} (转为文字标签 + 封面图)")
         if system_count:
@@ -483,3 +733,10 @@ class ChatLabExporter:
             print(f"  引用/回复: {ref_count}")
         size_mb = os.path.getsize(output_path) / (1024 * 1024)
         print(f"  文件大小: {size_mb:.1f} MB")
+        self.last_stats = {
+            "messages": len(chatlab_messages),
+            "voice": voice_count,
+            "voice_transcribed": voice_transcribed,
+            "voice_emotion": voice_emotion,
+            "asr": asr_stats,
+        }

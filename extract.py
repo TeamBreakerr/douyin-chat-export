@@ -16,6 +16,11 @@ def _parse_args():
         "download_images": "--download-images" in sys.argv,
         "output_format": "jsonl",
         "output_path": None,
+        "asr_url": None,
+        "asr_language": None,
+        "asr_prompt": None,
+        "asr_timeout": None,
+        "asr_batch_size": None,
     }
 
     if "--discover" in sys.argv:
@@ -32,6 +37,17 @@ def _parse_args():
             args["output_format"] = sys.argv[i + 1]
         elif arg == "--output" and i < len(sys.argv) - 1:
             args["output_path"] = sys.argv[i + 1]
+        elif arg == "--asr-url" and i < len(sys.argv) - 1:
+            args["asr_url"] = sys.argv[i + 1]
+        elif arg == "--asr-language" and i < len(sys.argv) - 1:
+            value = sys.argv[i + 1]
+            args["asr_language"] = "" if value.lower() in ("auto", "none", "detect") else value
+        elif arg == "--asr-prompt" and i < len(sys.argv) - 1:
+            args["asr_prompt"] = sys.argv[i + 1]
+        elif arg == "--asr-timeout" and i < len(sys.argv) - 1:
+            args["asr_timeout"] = sys.argv[i + 1]
+        elif arg == "--asr-batch-size" and i < len(sys.argv) - 1:
+            args["asr_batch_size"] = sys.argv[i + 1]
 
     return args
 
@@ -47,6 +63,11 @@ def run_export(args):
     exporter = ChatLabExporter(
         conv_name=args["name_filter"],
         output_format=fmt,
+        asr_url=args["asr_url"],
+        asr_language=args["asr_language"],
+        asr_prompt=args["asr_prompt"],
+        asr_timeout=args["asr_timeout"],
+        asr_batch_size=args["asr_batch_size"],
     )
     exporter.export(output_path)
 

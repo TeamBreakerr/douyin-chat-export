@@ -32,6 +32,14 @@ def _save_config(cfg):
     _cfg.save_config(cfg)
 
 
+def _clamp_asr_batch_size(value, minimum: int = 2) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = 10
+    return max(minimum, min(parsed, 10))
+
+
 # ── Scrape job state ──
 _scrape_state = {
     "status": "idle",  # idle | running | completed | failed
@@ -46,6 +54,24 @@ _export_state = {
     "status": "idle",
     "file_path": None,
     "message": "",
+}
+
+# ── Standalone voice recognition state ──
+_voice_recognition_state = {
+    "status": "idle",  # idle | running | completed | failed
+    "phase": "idle",   # scanning | recognizing | completed
+    "total": 0,
+    "done": 0,
+    "ok": 0,
+    "failed": 0,
+    "empty": 0,
+    "missing": 0,
+    "skipped": 0,
+    "current": "",
+    "message": "",
+    "started_at": None,
+    "finished_at": None,
+    "task": None,
 }
 
 # ── Scheduler state ──
@@ -126,6 +152,22 @@ class ExportRequest(BaseModel):
     format: str = "jsonl"
     filter: str = ""
     conversations: list[str] | None = None  # selected nicknames; overrides filter
+    transcribe_voice: bool = False
+    asr_url: str = ""
+    asr_language: str = "Chinese"
+    asr_prompt: str = ""
+    asr_use_batch: bool = True
+    asr_batch_size: int = 10
+
+
+class VoiceRecognitionRequest(BaseModel):
+    conversations: list[str] | None = None
+    asr_url: str = ""
+    asr_language: str = "Chinese"
+    asr_prompt: str = ""
+    use_batch: bool = True
+    batch_size: int = 10
+    force: bool = False
 
 
 class ScheduleRequest(BaseModel):
@@ -149,7 +191,7 @@ class PasswordRequest(BaseModel):
 
 
 class SelectedUpdate(BaseModel):
-    section: str  # "scraper" | "export" | "schedule"
+    section: str  # "scraper" | "export" | "recognition" | "schedule"
     conversations: list[str]
 
 
@@ -431,6 +473,7 @@ async def panel_status():
     conn.close()
 
     cfg = _load_config()
+    env_asr_url = os.environ.get("QWEN_ASR_URL", "").strip()
 
     return {
         "conversations": stats["conversations"],
@@ -449,6 +492,26 @@ async def panel_status():
             "status": _export_state["status"],
             "file_path": _export_state["file_path"],
             "message": _export_state["message"],
+            "asr": {
+                "enabled": bool(cfg.get("asr_enabled", bool(env_asr_url))),
+                "url": cfg.get("asr_url", env_asr_url),
+                "language": cfg.get(
+                    "asr_language",
+                    os.environ.get("QWEN_ASR_LANGUAGE", "Chinese"),
+                ),
+                "prompt": cfg.get(
+                    "asr_prompt", os.environ.get("QWEN_ASR_PROMPT", "")
+                ),
+                "use_batch": bool(cfg.get("asr_use_batch", True)),
+                "batch_size": max(
+                    2, _clamp_asr_batch_size(cfg.get("asr_batch_size", 10)),
+                ),
+            },
+        },
+        "voice_recognition": {
+            key: value
+            for key, value in _voice_recognition_state.items()
+            if key != "task"
         },
         "scheduler": {
             "enabled": _scheduler_state["enabled"],
@@ -765,13 +828,14 @@ async def get_selected():
     return {
         "scraper": cfg.get("scraper_selected", []),
         "export": cfg.get("export_selected", []),
+        "recognition": cfg.get("recognition_selected", []),
         "schedule": cfg.get("schedule_selected", []),
     }
 
 
 @control_router.post("/api/conversations/selected")
 async def set_selected(req: SelectedUpdate):
-    if req.section not in ("scraper", "export", "schedule"):
+    if req.section not in ("scraper", "export", "recognition", "schedule"):
         return JSONResponse({"error": "invalid section"}, status_code=400)
     cfg = _load_config()
     cfg[f"{req.section}_selected"] = list(req.conversations)
@@ -857,23 +921,173 @@ async def _cron_loop(parsed: list, incremental: bool):
         pass
 
 
+def _voice_recognition_payload() -> dict:
+    return {
+        key: value
+        for key, value in _voice_recognition_state.items()
+        if key != "task"
+    }
+
+
+def _update_voice_recognition_progress(progress: dict) -> None:
+    for key in (
+        "phase", "total", "done", "ok", "failed", "empty",
+        "missing", "skipped", "current",
+    ):
+        if key in progress:
+            _voice_recognition_state[key] = progress[key]
+
+    if progress.get("phase") == "scanning":
+        _voice_recognition_state["message"] = "正在扫描本地语音..."
+    elif progress.get("phase") == "recognizing":
+        current = progress.get("current") or ""
+        current_note = f"，当前 {current}" if current else ""
+        _voice_recognition_state["message"] = (
+            f"已处理 {_voice_recognition_state['done']} / "
+            f"{_voice_recognition_state['total']}，成功 "
+            f"{_voice_recognition_state['ok']}，失败 "
+            f"{_voice_recognition_state['failed']}，缺文件 "
+            f"{_voice_recognition_state['missing']}，跳过缓存 "
+            f"{_voice_recognition_state['skipped']}{current_note}"
+        )
+
+
+@control_router.get("/api/voice-recognition/status")
+async def voice_recognition_status():
+    return _voice_recognition_payload()
+
+
+@control_router.post("/api/voice-recognition")
+async def start_voice_recognition(req: VoiceRecognitionRequest):
+    if _voice_recognition_state["status"] == "running":
+        return JSONResponse({"error": "Voice recognition already running"}, status_code=409)
+    if _export_state["status"] == "running":
+        return JSONResponse({"error": "导出进行中，请稍后再识别语音"}, status_code=409)
+    if not req.asr_url.strip():
+        return JSONResponse({"error": "必须填写 ASR 服务地址"}, status_code=400)
+
+    try:
+        from extractor.asr import normalize_server_url
+        asr_url = normalize_server_url(req.asr_url)
+    except ValueError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=400)
+
+    cfg = _load_config()
+    if req.conversations is not None:
+        cfg["recognition_selected"] = list(req.conversations)
+    cfg["asr_url"] = asr_url
+    cfg["asr_language"] = req.asr_language.strip()
+    cfg["asr_prompt"] = req.asr_prompt.strip()
+    cfg["asr_use_batch"] = bool(req.use_batch)
+    cfg["asr_batch_size"] = _clamp_asr_batch_size(req.batch_size)
+    _save_config(cfg)
+
+    _voice_recognition_state.update({
+        "status": "running",
+        "phase": "scanning",
+        "total": 0,
+        "done": 0,
+        "ok": 0,
+        "failed": 0,
+        "empty": 0,
+        "missing": 0,
+        "skipped": 0,
+        "current": "",
+        "message": "正在扫描本地语音...",
+        "started_at": time.time(),
+        "finished_at": None,
+    })
+    task = asyncio.create_task(_run_voice_recognition(req, asr_url))
+    _voice_recognition_state["task"] = task
+    return {"status": "started"}
+
+
+async def _run_voice_recognition(req: VoiceRecognitionRequest, asr_url: str):
+    from functools import partial
+
+    try:
+        from extractor.voice_recognition import recognize_voice_messages
+
+        job = partial(
+            recognize_voice_messages,
+            conversations=req.conversations,
+            asr_url=asr_url,
+            language=req.asr_language.strip() or None,
+            prompt=req.asr_prompt.strip(),
+            timeout=float(os.environ.get("QWEN_ASR_TIMEOUT", "300") or 300),
+            batch_size=(
+                _clamp_asr_batch_size(req.batch_size) if req.use_batch else 1
+            ),
+            force=req.force,
+            progress_cb=_update_voice_recognition_progress,
+        )
+        result = await asyncio.get_running_loop().run_in_executor(None, job)
+        _voice_recognition_state.update(result)
+        _voice_recognition_state["status"] = "completed"
+        _voice_recognition_state["phase"] = "completed"
+        if result["total"]:
+            _voice_recognition_state["message"] = (
+                f"完成：成功 {result['ok']}，失败 {result['failed']}，"
+                f"空结果 {result['empty']}，缺文件 {result['missing']}，"
+                f"跳过缓存 {result['skipped']} / {result['total']}"
+            )
+        else:
+            _voice_recognition_state["message"] = "没有找到语音消息"
+    except Exception as exc:
+        _voice_recognition_state["status"] = "failed"
+        _voice_recognition_state["message"] = f"识别失败: {exc}"
+    finally:
+        _voice_recognition_state["finished_at"] = time.time()
+
+
 @control_router.post("/api/export")
 async def start_export(req: ExportRequest):
     if _export_state["status"] == "running":
         return JSONResponse({"error": "Export already running"}, status_code=409)
+    if _voice_recognition_state["status"] == "running":
+        return JSONResponse({"error": "语音识别进行中，请稍后再导出"}, status_code=409)
+
+    if req.format not in ("json", "jsonl"):
+        return JSONResponse({"error": "format 必须是 json 或 jsonl"}, status_code=400)
+
+    asr_url = ""
+    if req.transcribe_voice:
+        if not req.asr_url.strip():
+            return JSONResponse({"error": "启用语音转写时必须填写 ASR 服务地址"}, status_code=400)
+        try:
+            from extractor.asr import normalize_server_url
+            asr_url = normalize_server_url(req.asr_url)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
 
     _export_state["status"] = "running"
-    _export_state["message"] = "正在导出..."
+    _export_state["message"] = "正在转写语音并导出..." if asr_url else "正在导出..."
 
-    # Persist selection
+    # Persist selection and ASR settings together.
+    cfg = _load_config()
     if req.conversations is not None:
-        cfg = _load_config()
         cfg["export_selected"] = list(req.conversations)
-        _save_config(cfg)
+    cfg["asr_enabled"] = bool(req.transcribe_voice)
+    cfg["asr_url"] = asr_url or req.asr_url.strip()
+    cfg["asr_language"] = req.asr_language.strip()
+    cfg["asr_prompt"] = req.asr_prompt.strip()
+    cfg["asr_use_batch"] = bool(req.asr_use_batch)
+    cfg["asr_batch_size"] = _clamp_asr_batch_size(req.asr_batch_size)
+    _save_config(cfg)
 
     convs = list(req.conversations) if req.conversations else None
     loop = asyncio.get_event_loop()
-    await loop.run_in_executor(None, _do_export, req.format, req.filter, convs)
+    await loop.run_in_executor(
+        None,
+        _do_export,
+        req.format,
+        req.filter,
+        convs,
+        asr_url,
+        req.asr_language.strip(),
+        req.asr_prompt.strip(),
+        1 if not req.asr_use_batch else _clamp_asr_batch_size(req.asr_batch_size),
+    )
     return {
         "status": _export_state["status"],
         "message": _export_state["message"],
@@ -881,7 +1095,15 @@ async def start_export(req: ExportRequest):
     }
 
 
-def _do_export(fmt: str, filter_name: str, conversations: list | None):
+def _do_export(
+    fmt: str,
+    filter_name: str,
+    conversations: list | None,
+    asr_url: str = "",
+    asr_language: str = "Chinese",
+    asr_prompt: str = "",
+    asr_batch_size: int = 10,
+):
     try:
         from extractor.exporter import ChatLabExporter
         import re
@@ -907,13 +1129,27 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
                     os.remove(output_path)
                 except Exception:
                     pass
-            exporter = ChatLabExporter(conv_name=targets[0] or None, output_format=fmt)
+            exporter = ChatLabExporter(
+                conv_name=targets[0] or None,
+                output_format=fmt,
+                asr_url=asr_url,
+                asr_language=asr_language,
+                asr_prompt=asr_prompt,
+                asr_batch_size=_clamp_asr_batch_size(asr_batch_size, minimum=1),
+            )
             exporter.export(output_path)
             if not os.path.exists(output_path):
                 raise RuntimeError(f"未找到会话: {targets[0] or '(any)'}")
             _export_state["file_path"] = f"export{ext}"
             size_mb = os.path.getsize(output_path) / (1024 * 1024)
-            _export_state["message"] = f"导出完成 ({size_mb:.1f} MB)"
+            asr_stats = exporter.last_stats.get("asr", {})
+            asr_note = ""
+            if exporter.last_stats.get("voice_transcribed"):
+                asr_note = (
+                    f", 语音转写 {exporter.last_stats.get('voice_transcribed', 0)}"
+                    f"/{exporter.last_stats.get('voice', 0)}"
+                )
+            _export_state["message"] = f"导出完成 ({size_mb:.1f} MB{asr_note})"
         else:
             # Multiple → bundle into a zip
             tmp_dir = os.path.join(data_dir, "export_tmp")
@@ -926,13 +1162,27 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
                     pass
 
             produced = []
+            total_voice = 0
+            total_transcribed = 0
             for name in targets:
                 safe = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", name)[:80] or "conv"
                 path = os.path.join(tmp_dir, f"{safe}{ext}")
                 try:
-                    ChatLabExporter(conv_name=name, output_format=fmt).export(path)
+                    exporter = ChatLabExporter(
+                        conv_name=name,
+                        output_format=fmt,
+                        asr_url=asr_url,
+                        asr_language=asr_language,
+                        asr_prompt=asr_prompt,
+                        asr_batch_size=_clamp_asr_batch_size(asr_batch_size, minimum=1),
+                    )
+                    exporter.export(path)
                     if os.path.exists(path):
                         produced.append((name, path))
+                        total_voice += exporter.last_stats.get("voice", 0)
+                        total_transcribed += exporter.last_stats.get(
+                            "voice_transcribed", 0
+                        )
                 except Exception as e:
                     print(f"[-] 导出 {name} 失败: {e}")
 
@@ -946,7 +1196,14 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
 
             _export_state["file_path"] = "export.zip"
             size_mb = os.path.getsize(zip_path) / (1024 * 1024)
-            _export_state["message"] = f"导出完成 ({len(produced)} 个会话, {size_mb:.1f} MB)"
+            asr_note = (
+                f", 语音转写 {total_transcribed}/{total_voice}"
+                if total_transcribed and total_voice
+                else ""
+            )
+            _export_state["message"] = (
+                f"导出完成 ({len(produced)} 个会话, {size_mb:.1f} MB{asr_note})"
+            )
 
         _export_state["status"] = "completed"
     except Exception as e:

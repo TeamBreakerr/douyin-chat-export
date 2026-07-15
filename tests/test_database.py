@@ -82,6 +82,16 @@ def test_search_joins_conv_and_sender_name(temp_db):
 def test_delete_conversation_removes_messages(temp_db):
     import backend.database as database
     _seed(temp_db)
+    conn = database.get_db()
+    conn.execute(
+        "INSERT INTO voice_transcriptions (msg_id, text, transcribed_at) "
+        "VALUES ('m1', '识别文本', 1)"
+    )
+    conn.commit()
+    conn.close()
     res = database.delete_conversation("c1")
     assert res == {"conversation_deleted": 1, "messages_deleted": 5}
     assert database.get_conversation("c1") is None
+    conn = database.get_db()
+    assert conn.execute("SELECT COUNT(*) FROM voice_transcriptions").fetchone()[0] == 0
+    conn.close()

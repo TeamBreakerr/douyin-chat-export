@@ -4,8 +4,10 @@ Locks the exact output strings/types the exporter produces, so the P4 refactor
 (splitting the 240-line export() god-method into pure functions) cannot drift.
 """
 import json
+import os
 
 from extractor import exporter
+from extractor.asr import ASRResult
 from extractor.exporter import (
     ChatLabExporter,
     _build_reply_to,
@@ -35,6 +37,17 @@ def test_resolve_voice_beats_everything():
     cj = {"resource_url": "x", "duration": 2500}
     content, ctype, stats = _resolve_message(_msg(msg_type=0), cj, "/tmp")
     assert content == "[语音 2秒]" and ctype == 0 and stats == {"voice": 1}
+
+
+def test_resolve_voice_with_transcription_and_future_emotion():
+    cj = {"resource_url": "x", "duration": 2500}
+    result = ASRResult(text="今天心情很好", language="Chinese", emotion="happy")
+    content, ctype, stats = _resolve_message(
+        _msg(msg_type=0), cj, "/tmp", result
+    )
+    assert content == "[语音转文本] [情绪: happy] 今天心情很好"
+    assert ctype == 0
+    assert stats == {"voice": 1, "voice_transcribed": 1, "voice_emotion": 1}
 
 
 def test_resolve_video_type5():
@@ -188,3 +201,67 @@ def test_export_json_format_shape(temp_db, tmp_path):
     assert data["chatlab"]["version"] == "0.0.2"
     assert isinstance(data["members"], list)
     assert data["messages"][0]["content"] == "hi"
+
+
+def test_full_export_transcribes_local_voice(temp_db, tmp_path, monkeypatch):
+    import common.paths as paths
+    import extractor.models as models
+
+    media_dir = tmp_path / "media"
+    voice_dir = media_dir / "voice"
+    voice_dir.mkdir(parents=True)
+    audio = voice_dir / "7659828680696448563.mpeg"
+    audio.write_bytes(b"fake audio sent through mocked client")
+    monkeypatch.setattr(paths, "MEDIA_DIR", str(media_dir))
+
+    conn = models.get_db()
+    insert_conversation(conn, "c1", "语音会话", participant_uids='["owner"]')
+    conn.execute("INSERT INTO users (uid, nickname) VALUES ('owner','我')")
+    voice_cj = {"resource_url": {"url_list": ["https://cdn/voice"]}, "duration": 3100}
+    insert_message(
+        conn,
+        "srv_7659828680696448563",
+        "c1",
+        1,
+        sender_uid="owner",
+        msg_type=0,
+        media_local_path="voice/7659828680696448563.mpeg",
+        raw_data=_raw(voice_cj),
+    )
+    conn.commit()
+    conn.close()
+
+    class FakeASRClient:
+        def __init__(self, server_url, **kwargs):
+            assert server_url == "http://asr.test:8111"
+            assert kwargs["language"] == "Chinese"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def transcribe_files(self, file_paths):
+            file_paths = list(file_paths)
+            assert file_paths == [os.path.abspath(audio)]
+            return {
+                file_paths[0]: ASRResult(
+                    text="这是测试语音。", language="Chinese", model="Qwen3-ASR"
+                )
+            }, {}
+
+    monkeypatch.setattr(exporter, "QwenASRClient", FakeASRClient)
+    out = tmp_path / "voice.json"
+    exp = ChatLabExporter(
+        conv_name="语音会话",
+        output_format="json",
+        asr_url="http://asr.test:8111",
+    )
+    exp.export(str(out))
+
+    data = json.loads(out.read_text(encoding="utf-8"))
+    assert data["messages"][0]["content"] == "[语音转文本] 这是测试语音。"
+    assert exp.last_stats["voice"] == 1
+    assert exp.last_stats["voice_transcribed"] == 1
+    assert exp.last_stats["asr"]["failed"] == 0

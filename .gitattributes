@@ -1,0 +1,4 @@
+# The panel route contract compares the served HTML byte-for-byte with this
+# baseline. Keep both files LF-only even on Windows checkouts.
+backend/panel/static/panel.html text eol=lf
+tests/baseline/panel.html text eol=lf

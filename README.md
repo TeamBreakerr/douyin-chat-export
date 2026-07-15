@@ -41,6 +41,7 @@
 
 **导出 & 运维**
 - 导出 [ChatLab](https://github.com/hellodigua/ChatLab) 标准格式（JSON / JSONL），可直接做 AI 聊天分析
+- 可选接入 [Qwen3-ASR Custom Server](https://github.com/MeidoPromotionAssociation/Qwen3-ASR-Custom-Server)，把本地语音转写后写入 JSON / JSONL
 - Web 控制面板：可视化采集 / 导出 / 定时任务 / 远程扫码登录 / 密码保护
 - 定时任务（cron）+ [Server酱](https://sct.ftqq.com) 失败推送到微信
 - Docker 一键部署，数据持久化到 `./data`
@@ -90,6 +91,11 @@ docker compose up -d --build
 | `SCRAPER_INCREMENTAL` | `true` | 采集是否增量 |
 | `SCRAPER_FILTER` | (空) | 过滤指定会话名称 |
 | `SCRAPER_SCHEDULE` | (空) | cron 表达式，如 `0 */6 * * *`（空=不定时） |
+| `QWEN_ASR_URL` | (空) | Qwen3-ASR 服务根地址；留空则不转写语音 |
+| `QWEN_ASR_LANGUAGE` | `Chinese` | 识别语言；设为空字符串则自动检测 |
+| `QWEN_ASR_PROMPT` | (空) | 可选的人名、专有词和领域提示 |
+| `QWEN_ASR_TIMEOUT` | `300` | 单次 ASR HTTP 请求超时秒数 |
+| `QWEN_ASR_BATCH_SIZE` | `10` | 每个批量请求上传的语音文件数；客户端强制上限为 10 |
 
 </details>
 
@@ -200,9 +206,34 @@ python3 extract.py --filter "会话名称" --incremental   # 增量（只取新�
 python3 export.py --filter "会话名称"                    # JSONL（默认）
 python3 export.py --filter "会话名称" --format json      # JSON
 python3 export.py --filter "会话名称" --output data/export.jsonl
+
+# 使用 Qwen3-ASR 转写语音；也可在控制面板中勾选并填写服务地址
+python3 export.py --filter "会话名称" --format json \
+  --asr-url http://127.0.0.1:8000 \
+  --asr-language Chinese \
+  --asr-prompt "人名：小明、小红" \
+  --asr-batch-size 10
 ```
 
-导出内容：文本、表情、图片 URL、语音（base64 嵌入）、分享链接、引用/回复关系。也可在控制面板 **导出** 分区一键操作。
+导出内容：文本、表情、图片 URL、语音标签/转写文本、分享链接、引用/回复关系。也可在控制面板 **导出** 分区一键操作。
+
+启用 ASR 后，导出器会把 `data/media/voice/` 中的原始语音以
+`multipart/form-data` 批量上传到 `POST /v1/audio/transcriptions/batch`，并固定提交
+`convert_audio=true`，由服务端转换抖音 `.mpeg` 音频。成功时消息内容形如：
+
+```text
+[语音转文本] 这是识别出来的文本。
+```
+
+有以下降级规则：
+
+- 控制面板提供独立的 **语音识别** 任务，可以为识别和导出分别选择会话，并实时显示总数、已处理、成功、失败、缺文件、缓存跳过、空结果及当前文件。
+- 识别结果持久化在 SQLite 的 `voice_transcriptions` 表；音频大小或修改时间变化时缓存自动失效。导出始终优先复用缓存，只有勾选“导出时识别尚未缓存的语音”才会现场补识别。
+- 网页可选择是否使用批量接口以及每批 2–10 条；关闭批量后逐条调用单文件接口。客户端在所有入口强制每批最多 10 条。命令行传 `--asr-batch-size 1` 可强制使用单文件接口。
+- 批量请求失败时自动逐文件重试，避免一个坏文件拖累整批。
+- 本地音频缺失、服务不可达、超时、空结果或单条转写失败时，仍正常导出原标签 `[语音 N秒]`。
+- ASR 地址、语言、提示及批量设置会由控制面板持久化到 `data/panel_config.json`；语音内容会发送到所填服务，请只使用可信服务。
+- 当前 Qwen3-ASR 官方输出包含语言、文本和可选时间戳，不包含独立的情绪分类；客户端会兼容自定义服务未来可能返回的 `emotion` 字段。
 
 ## 控制面板
 
@@ -217,7 +248,7 @@ python3 export.py --filter "会话名称" --output data/export.jsonl
 | **概览** | 会话数 / 消息数 / 用户数 |
 | **采集** | 刷新会话列表、增量/全量切换、勾选会话、实时日志 |
 | **定时** | 标准 cron 表达式 + 预设快捷按钮 |
-| **导出** | 选格式和会话一键导出下载、媒体回填（历史图片/视频） |
+| **导出** | 独立 Qwen3-ASR 识别任务与实时进度、缓存复用、批量设置、JSON/JSONL 导出、媒体回填 |
 | **登录** | 远程扫码、Cookie 导入、检查/清除登录态 |
 | **设置** | 访问密码、Server酱 失败通知；4 套主题、中英文切换 |
 

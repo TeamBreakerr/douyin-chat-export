@@ -69,6 +69,18 @@ def init_db():
             FOREIGN KEY (conv_id) REFERENCES conversations(conv_id)
         );
 
+        CREATE TABLE IF NOT EXISTS voice_transcriptions (
+            msg_id TEXT PRIMARY KEY,
+            text TEXT NOT NULL,
+            language TEXT,
+            model TEXT,
+            emotion TEXT,
+            source_size INTEGER,
+            source_mtime_ns INTEGER,
+            asr_url TEXT,
+            transcribed_at INTEGER NOT NULL DEFAULT 0
+        );
+
         CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conv_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_messages_seq ON messages(conv_id, seq);
         CREATE INDEX IF NOT EXISTS idx_messages_content ON messages(content);
