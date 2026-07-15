@@ -2,6 +2,8 @@ services:
   douyin-chat-export:
     build: .
     container_name: douyin-chat-export
+    ports:
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./data:/app/data
     environment:
@@ -12,9 +14,3 @@ services:
       - SCRAPER_FILTER=             # empty = all conversations
       - SCRAPER_SCHEDULE=           # cron expr, e.g. "0 */6 * * *" (empty = no schedule)
     restart: unless-stopped
-    networks:
-      - web-internal
-
-networks:
-  web-internal:
-    external: true

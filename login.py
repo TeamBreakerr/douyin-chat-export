@@ -58,6 +58,19 @@ async def main():
         await pw.stop()
         return
 
+    # Give Chromium time to flush cookies to disk before closing
+    print("[*] 正在保存登录态到磁盘...")
+    await asyncio.sleep(5)
+
+    # Also export to JSON as backup (avoids SQLite flush race condition)
+    import json
+    cookies = await context.cookies()
+    cookie_file = os.path.join(os.path.dirname(__file__), "data", "cookies_backup.json")
+    os.makedirs(os.path.dirname(cookie_file), exist_ok=True)
+    with open(cookie_file, "w", encoding="utf-8") as f:
+        json.dump(cookies, f)
+    print(f"[+] Cookies 已备份到 {cookie_file} ({len(cookies)} 条)")
+
     await context.close()
     await pw.stop()
 

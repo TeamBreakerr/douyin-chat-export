@@ -1,5 +1,5 @@
 # Stage 1: Build Vue frontend
-FROM node:22-alpine AS frontend-builder
+FROM docker.m.daocloud.io/library/node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci --network-timeout=120000 || npm ci --registry=https://registry.npmmirror.com --network-timeout=120000
@@ -9,7 +9,7 @@ COPY frontend/public/ public/
 RUN npm run build
 
 # Stage 2: Python runtime with Playwright
-FROM python:3.12-slim-bookworm
+FROM docker.m.daocloud.io/library/python:3.12-slim-bookworm
 
 # System deps for Playwright Chromium + CJK fonts
 RUN apt-get update && apt-get install -y --no-install-recommends \

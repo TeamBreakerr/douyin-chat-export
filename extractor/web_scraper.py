@@ -214,6 +214,25 @@ class WebChatScraper:
         self.page = self.context.pages[0] if self.context.pages else await self.context.new_page()
         print("[+] 浏览器已启动")
 
+        # Fallback: if no sessionid in profile (or sessionid value is empty), try loading from JSON backup
+        cookies = await self.context.cookies()
+        if not any(c["name"] == "sessionid" and c["value"] for c in cookies):
+            import json, os as _os
+            backup_file = _os.path.join(_os.path.dirname(_os.path.dirname(__file__)), "data", "cookies_backup.json")
+            if _os.path.exists(backup_file):
+                with open(backup_file, "r", encoding="utf-8") as f:
+                    backup_cookies = json.load(f)
+                if any(c["name"] == "sessionid" for c in backup_cookies):
+                    print("[*] 从 JSON 备份加载 cookies...")
+                    # Filter to douyin.com cookies only
+                    dy_cookies = [c for c in backup_cookies if "douyin.com" in c.get("domain", "") or "byted" in c.get("domain", "")]
+                    await self.context.add_cookies(dy_cookies)
+                    print(f"[+] 已加载 {len(dy_cookies)} 条 cookies 从备份")
+                    # 验证 sessionid 是否真的写进去了
+                    after = await self.context.cookies()
+                    sess = next((c["value"][:16] + "..." for c in after if c["name"] == "sessionid" and c["value"]), "NOT FOUND")
+                    print(f"[*] sessionid 当前值（前16位）: {sess}")
+
     async def wait_for_login(self):
         await self.page.goto("https://www.douyin.com/", wait_until="domcontentloaded")
         print("[*] 正在检测登录状态...")

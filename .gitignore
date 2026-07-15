@@ -1,12 +1,29 @@
-data/
+# Debug & test scripts
+check_*.py
+debug_*.py
+test_*.py
+find_*.py
+
+# Logs
+*.log
+*.zip
+
+# Environment
+.env
+.venv/
 venv/
 __pycache__/
-*.pyc
-node_modules/
+
+# Data (local only - user-specific)
+data/
+*.db
+*.sqlite
+
+# Build artifacts
+dist/
+build/
+*.egg-info/
+
+# OS
 .DS_Store
-.server.pid
-.server.log
-.claude/
-CLAUDE.md
-TECHNICAL.md
-frontend/node_modules/
+Thumbs.db
