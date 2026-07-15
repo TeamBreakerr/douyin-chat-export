@@ -3,6 +3,7 @@ check_*.py
 debug_*.py
 test_*.py
 find_*.py
+create_pr.py
 
 # Logs
 *.log
