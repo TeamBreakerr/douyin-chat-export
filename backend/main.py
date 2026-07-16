@@ -76,6 +76,19 @@ async def auth_middleware(request: Request, call_next):
     return JSONResponse({"error": "unauthorized"}, status_code=401)
 
 
+@app.middleware("http")
+async def utf8_response_middleware(request: Request, call_next):
+    """让浏览器显式按 UTF-8 解码（Windows 部署下尤其重要）。"""
+    response = await call_next(request)
+    content_type = response.headers.get("content-type", "")
+    if (
+        content_type.startswith(("application/json", "text/html"))
+        and "charset=" not in content_type.lower()
+    ):
+        response.headers["content-type"] = f"{content_type}; charset=utf-8"
+    return response
+
+
 from pydantic import BaseModel
 
 

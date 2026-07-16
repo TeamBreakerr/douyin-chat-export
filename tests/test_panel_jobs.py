@@ -72,6 +72,23 @@ def test_backfill_start_conflict(monkeypatch):
     assert getattr(res, "status_code", None) == 409
 
 
+def test_windows_subprocess_output_is_forced_to_utf8(monkeypatch):
+    monkeypatch.setenv("PYTHONIOENCODING", "gbk")
+    env = cp._utf8_subprocess_env()
+    assert env["PYTHONUTF8"] == "1"
+    assert env["PYTHONIOENCODING"] == "utf-8"
+    assert env["PYTHONUNBUFFERED"] == "1"
+
+
+def test_log_reader_supports_utf8_and_legacy_gbk(tmp_path):
+    utf8_log = tmp_path / "utf8.log"
+    gbk_log = tmp_path / "gbk.log"
+    utf8_log.write_bytes("正在识别语音".encode("utf-8"))
+    gbk_log.write_bytes("发现 3 个会话".encode("gb18030"))
+    assert cp._read_utf8_or_gbk(str(utf8_log)) == "正在识别语音"
+    assert cp._read_utf8_or_gbk(str(gbk_log)) == "发现 3 个会话"
+
+
 def test_run_scrape_clears_stale_stop_flag_and_reports_failure(isolated_scrape, monkeypatch):
     # Simulate a stale 'stopped' flag left by an earlier manual Stop, then a
     # cron/manual scrape that genuinely fails. It must be reported as failed and
