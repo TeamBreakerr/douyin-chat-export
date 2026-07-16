@@ -221,8 +221,9 @@ class WebChatScraper:
         for attempt in range(180):
             # Use Playwright cookie API to check HttpOnly cookies too
             cookies = await self.context.cookies("https://www.douyin.com")
-            cookie_names = {c["name"] for c in cookies}
-            logged_in = "sessionid" in cookie_names
+            # 要求 sessionid 值非空：LevelDB 里可能残留一个名字在、值为空的 sessionid，
+            # 只查名字会误判为已登录，随后 API 全部拿到 0 条。
+            logged_in = any(c["name"] == "sessionid" and c["value"] for c in cookies)
             if logged_in:
                 print("[+] 已检测到登录状态")
                 return True

@@ -48,7 +48,7 @@ async def main():
         except Exception:
             await asyncio.sleep(1)
             continue
-        if any(c.get("name") == "sessionid" for c in cookies):
+        if any(c.get("name") == "sessionid" and c.get("value") for c in cookies):
             print("[+] 登录成功！")
             break
         await asyncio.sleep(1)

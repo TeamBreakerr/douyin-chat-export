@@ -644,8 +644,7 @@ async def _probe_login_state() -> dict:
                     await page.goto("https://www.douyin.com/", wait_until="domcontentloaded")
                     await asyncio.sleep(2)
                     cookies = await ctx.cookies("https://www.douyin.com")
-                    cookie_names = {c["name"] for c in cookies}
-                    has_login = "sessionid" in cookie_names
+                    has_login = any(c["name"] == "sessionid" and c["value"] for c in cookies)
                     return {
                         "status": "logged_in" if has_login else "expired",
                         "has_cookies": has_login,
@@ -1302,8 +1301,7 @@ async def _login_flow():
 
         # Check if already logged in
         cookies = await ctx.cookies("https://www.douyin.com")
-        cookie_names = {c["name"] for c in cookies}
-        if "sessionid" in cookie_names:
+        if any(c["name"] == "sessionid" and c["value"] for c in cookies):
             _login_state["status"] = "logged_in"
             _login_state["message"] = "已登录，无需扫码"
             await _login_cleanup()
@@ -1337,8 +1335,7 @@ async def _login_flow():
 
             # Check login
             cookies = await ctx.cookies("https://www.douyin.com")
-            cookie_names = {c["name"] for c in cookies}
-            if "sessionid" in cookie_names:
+            if any(c["name"] == "sessionid" and c["value"] for c in cookies):
                 _login_state["status"] = "logged_in"
                 _login_state["message"] = "登录成功！"
                 _login_state["screenshot"] = None
