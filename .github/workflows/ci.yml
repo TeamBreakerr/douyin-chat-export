@@ -20,6 +20,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt pytest
+      - name: Stub frontend dist
+        # backend.main 只在 frontend/dist 存在时才注册 SPA 路由（/、/favicon.svg、
+        # /{full_path}）。路由契约测试要断言完整路由表，所以造个空壳让它们注册；
+        # 内容无所谓，契约测试只枚举路由不请求它们。
+        run: mkdir -p frontend/dist/assets && touch frontend/dist/index.html
       - name: Run pytest
         run: python -m pytest -q
 
