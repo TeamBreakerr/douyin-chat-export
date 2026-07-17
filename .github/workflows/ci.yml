@@ -4,6 +4,13 @@ on:
   pull_request:
   push:
     branches: [main]
+    tags: ["v*"]
+
+# 同一 ref 的运行排队执行，避免连续 push main 时两个发布 job 赛跑、
+# 旧 run 后完成把 latest 指回旧镜像
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   tests:
@@ -44,3 +51,95 @@ jobs:
       - run: npm ci
       - run: npm run test --if-present
       - run: npm run build
+
+  # ---- 镜像发布（只在 push main / 打 v* tag 时跑，PR 只测试）----
+  # 两个架构各在原生 runner 上构建、按 digest 推送，最后合并成一个
+  # multi-arch manifest。GHCR 用内置 GITHUB_TOKEN 推送，无需额外 secret。
+  build-image:
+    name: Docker image (${{ matrix.arch }})
+    if: github.event_name == 'push'
+    needs: [tests, frontend]
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-latest
+          - arch: arm64
+            runner: ubuntu-24.04-arm    # public 仓库免费的原生 arm64 runner
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          # GHCR 要求镜像名全小写，不能直接用 github.repository
+          images: ghcr.io/teambreakerr/douyin-chat-export
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=ghcr.io/teambreakerr/douyin-chat-export,push-by-digest=true,name-canonical=true,push=true
+          cache-from: type=gha,scope=${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+      - name: Export digest
+        run: |
+          mkdir -p /tmp/digests
+          digest="${{ steps.build.outputs.digest }}"
+          touch "/tmp/digests/${digest#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.arch }}
+          path: /tmp/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  publish-image:
+    name: Publish multi-arch manifest
+    needs: build-image
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digests-*
+          merge-multiple: true
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/metadata-action@v5
+        id: meta
+        with:
+          images: ghcr.io/teambreakerr/douyin-chat-export
+          # latest 语义固定为「main 最新」，不跟随 semver tag（打 tag 的
+          # commit 通常就在 main 上，push main 那次已经更新过 latest）
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,prefix=main-,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+      - name: Create manifest list and push
+        working-directory: /tmp/digests
+        run: |
+          docker buildx imagetools create \
+            $(jq -cr '.tags | map("-t " + .) | join(" ")' <<< "$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/teambreakerr/douyin-chat-export@sha256:%s ' *)
+      - name: Inspect
+        run: docker buildx imagetools inspect ghcr.io/teambreakerr/douyin-chat-export:${{ steps.meta.outputs.version }}
