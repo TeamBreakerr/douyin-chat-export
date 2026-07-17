@@ -1,5 +1,7 @@
 data/
 venv/
+.env
+docker-compose.local.yml
 __pycache__/
 *.pyc
 node_modules/

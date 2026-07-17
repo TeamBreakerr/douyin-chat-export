@@ -47,16 +47,31 @@
 
 ## 快速开始
 
-已装 Docker，三条命令跑起来：
+已装 Docker 即可，无需 clone 仓库、无需本地构建。新建一个目录，保存以下内容为 `docker-compose.yml`：
 
-```bash
-git clone https://github.com/TeamBreakerr/douyin-chat-export.git
-cd douyin-chat-export
-docker compose up -d --build
+```yaml
+services:
+  douyin-chat-export:
+    image: ghcr.io/teambreakerr/douyin-chat-export:latest
+    container_name: douyin-chat-export
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      - TZ=Asia/Shanghai
+    restart: unless-stopped
 ```
 
-然后 `python3 login.py` 在宿主机扫码登录（见[登录](#1-登录)），再到 `/panel` 采集即可。
-访问 `http://localhost:8000` 浏览，`http://localhost:8000/panel` 打开控制面板。
+```bash
+docker compose up -d
+```
+
+> **国内拉取 ghcr.io 缓慢或超时？** 把 `image:` 里的 `ghcr.io` 换成 `ghcr.nju.edu.cn`
+> （[南京大学镜像代理](https://doc.nju.edu.cn/books/e1654/page/ghcr)），其余不变。
+
+然后打开 `http://localhost:8000/panel` → **登录**（导入 Cookie 或远程扫码，见[登录](#1-登录)），
+采集完成后访问 `http://localhost:8000` 浏览。
 
 ## 环境要求
 
@@ -72,13 +87,27 @@ docker compose up -d --build
 
 ### Docker 部署（推荐）
 
+预构建镜像随 main 分支自动发布（amd64 / arm64 双架构），无需 clone、无需本地构建，
+compose 写法见[快速开始](#快速开始)。镜像已包含前端构建产物、后端服务、Playwright 浏览器环境，
+数据持久化在 `./data`。
+
+| 镜像标签 | 含义 |
+|----------|------|
+| `latest` | 跟随 main 最新提交 |
+| `main-<sha>` | main 上的特定提交，用于 pin 或回滚 |
+| `X.Y.Z` / `X.Y` / `X` | 发布版本（打 git tag `vX.Y.Z` 时发布） |
+
+<details>
+<summary><b>从源码构建</b>（想改代码或不信任预构建镜像时）</summary>
+
 ```bash
 git clone https://github.com/TeamBreakerr/douyin-chat-export.git
 cd douyin-chat-export
+# 取消 docker-compose.yml 里 “build: .” 的注释，然后：
 docker compose up -d --build
 ```
 
-已包含前端构建、后端服务、Playwright 浏览器环境。数据持久化在 `./data`。
+</details>
 
 <details>
 <summary><b>环境变量</b></summary>
@@ -96,13 +125,19 @@ docker compose up -d --build
 <details>
 <summary><b>反向代理</b></summary>
 
-`docker-compose.yml` 默认不映射端口，通过 Docker 网络 `web-internal` 配合反向代理（如 Nginx Proxy Manager）。如需直接访问，加端口映射：
+默认映射 `8000:8000` 直接访问。如走反向代理（如 Nginx Proxy Manager），去掉 `ports`，
+把容器加进反代所在的 Docker 网络：
 
 ```yaml
 services:
   douyin-chat-export:
-    ports:
-      - "8000:8000"
+    # 删掉 ports 段
+    networks:
+      - web-internal
+
+networks:
+  web-internal:
+    external: true
 ```
 
 </details>
@@ -149,9 +184,10 @@ Windows 用户可用 [nvm-windows](https://github.com/coreybutler/nvm-windows) �
 首次使用需登录抖音，三选一：
 
 <details open>
-<summary><b>方式 A：本地浏览器扫码</b>（推荐 Docker 用户）</summary>
+<summary><b>方式 A：本地浏览器扫码</b>（需 clone 仓库）</summary>
 
-在宿主机运行，弹出真实浏览器窗口扫码，登录态经 volume 自动同步到容器：
+在宿主机运行（脚本依赖仓库内代码，仅源码部署可用），弹出真实浏览器窗口扫码，
+登录态经 volume 自动同步到容器：
 
 ```bash
 # 需先装 Playwright：pip install playwright && playwright install chromium
@@ -162,7 +198,7 @@ python3 login.py
 </details>
 
 <details>
-<summary><b>方式 B：Cookie 导入</b>（无法在宿主机装 Playwright 时）</summary>
+<summary><b>方式 B：Cookie 导入</b>（推荐镜像部署用户，最简单）</summary>
 
 在任意浏览器登录抖音后导出 Cookie：
 

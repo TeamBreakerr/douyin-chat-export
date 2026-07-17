@@ -1,7 +1,12 @@
 services:
   douyin-chat-export:
-    build: .
+    image: ghcr.io/teambreakerr/douyin-chat-export:latest
+    # 国内拉取超时？把上面的 ghcr.io 换成 ghcr.nju.edu.cn（南京大学镜像代理）
+    # 想本地构建而不是拉镜像：取消下一行注释，然后 docker compose up -d --build
+    # build: .
     container_name: douyin-chat-export
+    ports:
+      - "8000:8000"
     volumes:
       - ./data:/app/data
     environment:
@@ -12,9 +17,3 @@ services:
       - SCRAPER_FILTER=             # empty = all conversations
       - SCRAPER_SCHEDULE=           # cron expr, e.g. "0 */6 * * *" (empty = no schedule)
     restart: unless-stopped
-    networks:
-      - web-internal
-
-networks:
-  web-internal:
-    external: true
