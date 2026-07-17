@@ -24,9 +24,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # Python dependencies
+# --only-shell: 容器内永远 headless（无显示器），只装 headless shell，
+# 不装只有「有头」模式才用的完整 Chromium（省 ~620MB）。宿主机 login.py
+# 用的是宿主机自装的 Playwright，不受影响。
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt \
-    && playwright install chromium
+    && playwright install chromium --only-shell
 
 # Application source
 COPY extract.py export.py scheduler.py ./
