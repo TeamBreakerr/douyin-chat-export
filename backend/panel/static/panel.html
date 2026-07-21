@@ -851,8 +851,8 @@ async function loadStatus() {
     document.getElementById('scrapeBtn').disabled = ss.status === 'running';
     document.getElementById('stopBtn').style.display = ss.status === 'running' ? '' : 'none';
     let timeStr = '';
-    if (ss.started_at) timeStr += t('startedAt') + new Date(ss.started_at * 1000).toLocaleTimeString();
-    if (ss.finished_at) timeStr += '  ' + t('finishedAt') + new Date(ss.finished_at * 1000).toLocaleTimeString();
+    if (ss.started_at) timeStr += t('startedAt') + new Date(ss.started_at * 1000).toLocaleString();
+    if (ss.finished_at) timeStr += '  ' + t('finishedAt') + new Date(ss.finished_at * 1000).toLocaleString();
     if (ss.message) timeStr += '  ' + ss.message;
     document.getElementById('scrapeTime').textContent = timeStr;
 
