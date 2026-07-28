@@ -3,6 +3,10 @@ import { ref, onMounted } from 'vue'
 import ConversationList from './components/ConversationList.vue'
 import MessageList from './components/MessageList.vue'
 import SearchBar from './components/SearchBar.vue'
+import ScreenshotView from './components/ScreenshotView.vue'
+
+// 截图模式：后端 headless 浏览器访问 /screenshot?...&token=<临时token>
+const isScreenshotMode = location.pathname === '/screenshot'
 
 const activeConversation = ref(null)
 const searchHighlight = ref('')
@@ -15,6 +19,10 @@ const authenticated = ref(false)
 const loginPassword = ref('')
 const loginError = ref('')
 const authToken = ref(localStorage.getItem('authToken') || '')
+if (isScreenshotMode) {
+  const qsToken = new URLSearchParams(location.search).get('token')
+  if (qsToken) authToken.value = qsToken
+}
 
 async function checkAuth() {
   try {
@@ -63,7 +71,9 @@ window.fetch = function(url, opts = {}) {
   return _origFetch.call(this, url, opts)
 }
 
-onMounted(checkAuth)
+onMounted(() => {
+  if (!isScreenshotMode) checkAuth()
+})
 
 const themes = [
   { id: 'dark',   label: '深蓝', color: '#1a1a2e' },
@@ -104,8 +114,10 @@ function navigateToMessage(item) {
 </script>
 
 <template>
+  <!-- Screenshot mode: chrome-less static render for headless capture -->
+  <ScreenshotView v-if="isScreenshotMode" />
   <!-- Loading -->
-  <div v-if="authChecking" class="login-screen">
+  <div v-else-if="authChecking" class="login-screen">
     <div class="login-box">
       <div class="login-loading">Loading...</div>
     </div>

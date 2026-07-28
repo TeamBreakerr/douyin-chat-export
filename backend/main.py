@@ -13,7 +13,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from . import database
 from common import config, paths
 
-app = FastAPI(title="抖音聊天记录浏览器", version="1.0.0")
+app = FastAPI(title="抖音聊天记录浏览器", version="1.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -46,6 +46,14 @@ def _verify_token(token: str) -> bool:
     return False
 
 
+def _verify_api_token(token: str, path: str, method: str) -> bool:
+    """持久 API token 只授权只读端点：GET /api/*（面板与删除操作除外）。"""
+    if not token or method != "GET" or not path.startswith("/api/"):
+        return False
+    api_token = config.get_api_token()
+    return bool(api_token) and hmac.compare_digest(token, api_token)
+
+
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
     path = request.url.path
@@ -72,6 +80,8 @@ async def auth_middleware(request: Request, call_next):
     if not token:
         token = request.cookies.get("auth_token", "")
     if _verify_token(token):
+        return await call_next(request)
+    if _verify_api_token(token, path, request.method):
         return await call_next(request)
     return JSONResponse({"error": "unauthorized"}, status_code=401)
 
@@ -182,6 +192,48 @@ def list_messages(
     return {"items": items, "total": total}
 
 
+@app.get("/api/conversations/{conv_id}/messages/by-date")
+def list_messages_by_date(
+    conv_id: str,
+    date: str = Query(..., pattern=r"^\d{4}-\d{2}-\d{2}$"),
+    tz: float = Query(8, ge=-12, le=14),
+):
+    conv = database.get_conversation(conv_id)
+    if not conv:
+        raise HTTPException(404, "会话不存在")
+    items = database.get_messages_by_date(conv_id, date, tz_hours=tz)
+    return {"items": items, "total": len(items), "date": date}
+
+
+@app.get("/api/conversations/{conv_id}/messages/range")
+def list_messages_range(
+    conv_id: str,
+    start_seq: int = Query(..., ge=0),
+    end_seq: int = Query(..., ge=0),
+):
+    if end_seq < start_seq:
+        raise HTTPException(400, "end_seq 不能小于 start_seq")
+    conv = database.get_conversation(conv_id)
+    if not conv:
+        raise HTTPException(404, "会话不存在")
+    items = database.get_messages_range(conv_id, start_seq, end_seq)
+    return {"items": items, "total": len(items)}
+
+
+@app.get("/api/conversations/{conv_id}/stats/daily")
+def daily_stats(conv_id: str, tz: float = Query(8, ge=-12, le=14)):
+    conv = database.get_conversation(conv_id)
+    if not conv:
+        raise HTTPException(404, "会话不存在")
+    return {"items": database.get_daily_stats(conv_id, tz_hours=tz)}
+
+
+@app.get("/api/token")
+def get_api_token():
+    """查看持久 API token（受与其余 /api/ 相同的鉴权保护）。"""
+    return {"token": config.ensure_api_token()}
+
+
 @app.get("/api/conversations/{conv_id}/senders")
 def list_senders(conv_id: str):
     conv = database.get_conversation(conv_id)
@@ -225,9 +277,14 @@ def get_user(uid: str):
 from backend.control_panel import control_router, restore_schedule_on_startup
 app.include_router(control_router)
 
+# Screenshot rendering (headless chromium against our own frontend)
+from backend.screenshot import screenshot_router
+app.include_router(screenshot_router)
+
 
 @app.on_event("startup")
 async def startup():
+    config.ensure_api_token()
     await restore_schedule_on_startup()
 
 # Serve Vue frontend (must be last)

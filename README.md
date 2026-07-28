@@ -18,6 +18,7 @@
 > [部署](#部署) ·
 > [使用](#使用) ·
 > [控制面板](#控制面板) ·
+> [开放 API](#开放-api) ·
 > [注意事项](#注意事项)
 
 ---
@@ -43,6 +44,8 @@
 **导出 & 运维**
 - 导出 [ChatLab](https://github.com/hellodigua/ChatLab) 标准格式（JSON / JSONL），可直接做 AI 聊天分析
 - 默认导出文件名包含会话名称和导出时间，多会话文件更易区分
+- **开放 API** — Bearer token 鉴权的只读 REST API：按日期 / seq 区间取消息、逐日消息量统计，供外部程序集成
+- **聊天长图渲染** — 一个 API 调用把任意消息区间渲染成聊天界面长图（PNG），5 套主题任选，可加标题栏
 - Web 控制面板：可视化采集 / 导出 / 定时任务 / 远程扫码登录 / 密码保护
 - 定时任务（cron）+ [Server酱](https://sct.ftqq.com) 失败推送到微信
 - Docker 一键部署，数据持久化到 `./data`
@@ -307,6 +310,42 @@ python3 export.py --filter "会话名称" --output data/export.jsonl
 ```
 
 </details>
+
+## 开放 API
+
+只读 REST API，方便外部程序（脚本、机器人、数据分析）访问已导出的数据。
+
+**鉴权**：首次启动自动生成永久 API token，存于 `data/panel_config.json` 的 `api_token` 字段
+（也可 `GET /api/token` 查看）。请求时带 `Authorization: Bearer <token>`。
+API token 只授权 **GET** 端点——删除操作和控制面板仍需面板密码登录。未设面板密码时所有接口无鉴权。
+
+| 端点 | 说明 |
+| --- | --- |
+| `GET /api/conversations` | 会话列表（支持 `search` / 分页） |
+| `GET /api/conversations/{conv_id}/messages` | 消息分页（`before_seq` / `after_seq`） |
+| `GET /api/conversations/{conv_id}/messages/by-date?date=2025-07-28&tz=8` | 某个自然日的全部消息（`tz` 为时区偏移小时，默认 +8） |
+| `GET /api/conversations/{conv_id}/messages/range?start_seq=100&end_seq=200` | seq 闭区间消息 |
+| `GET /api/conversations/{conv_id}/stats/daily?tz=8` | 逐日消息量统计 |
+| `GET /api/conversations/{conv_id}/screenshot?...` | **消息区间渲染成聊天长图（PNG）**，见下 |
+| `GET /api/search?q=关键词` | 全文搜索 |
+| `GET /api/users/{uid}` | 用户信息（昵称 / 头像） |
+
+**聊天长图渲染**：服务端用无头浏览器打开内置浏览界面的截图模式，整段消息渲染为一张 PNG
+（表情包 / 图片 / 引用 / 撤回标记与网页端完全一致，全程本地渲染，内容不出机器）：
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" -o chat.png \
+  "http://localhost:8000/api/conversations/<conv_id>/screenshot?start_seq=100&end_seq=160&theme=warm&title=THE%20DAY&subtitle=Jul%2028%2C%202025&self_uid=<你的uid>"
+```
+
+| 参数 | 说明 |
+| --- | --- |
+| `start_seq` / `end_seq` | 消息 seq 闭区间（跨度上限 2000） |
+| `theme` | `dark` / `wechat` / `light` / `warm` / `purple`（默认 `dark`） |
+| `title` / `subtitle` | 可选标题栏两行文字，留空则无标题栏 |
+| `self_uid` | 哪个 uid 显示在右侧（"我"）；可从 `/api/users` 或网页端「设置我」确认 |
+| `width` | 渲染宽度 px，默认 520 |
+| `scale` | 设备像素比，默认 2（高清） |
 
 ## 注意事项
 

@@ -45,3 +45,26 @@ def save_config(cfg: dict) -> None:
 def get_password_hash() -> str | None:
     """Return the configured password hash, or None if unset/missing/corrupt."""
     return load_config().get("password_hash") or None
+
+
+def get_api_token() -> str | None:
+    """Return the persistent API token, or None if not yet generated."""
+    return load_config().get("api_token") or None
+
+
+def ensure_api_token() -> str:
+    """Return the persistent API token, generating and saving one on first call.
+
+    The token authorizes read-only /api/ access for external programs
+    (Authorization: Bearer <token>); it never expires and survives restarts.
+    """
+    cfg = load_config()
+    token = cfg.get("api_token")
+    if not token:
+        import secrets
+
+        token = secrets.token_urlsafe(32)
+        cfg["api_token"] = token
+        save_config(cfg)
+        print("[i] 已生成 API token（panel_config.json 的 api_token 字段）")
+    return token

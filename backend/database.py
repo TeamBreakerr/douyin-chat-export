@@ -89,6 +89,55 @@ def get_messages(conv_id, page_size=100, before_seq=None, after_seq=None):
 
 
 
+def get_messages_by_date(conv_id, date_str, tz_hours=8, limit=5000):
+    """某个自然日（按 tz_hours 时区界定）内的全部消息，按 seq 升序。
+
+    date_str: "YYYY-MM-DD"。limit 是防御性上限，正常单日消息量远低于它。
+    """
+    offset_sec = int(tz_hours * 3600)
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT * FROM messages
+           WHERE conv_id = ?
+             AND date(timestamp + ?, 'unixepoch') = ?
+           ORDER BY seq ASC
+           LIMIT ?""",
+        (conv_id, offset_sec, date_str, limit),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_messages_range(conv_id, start_seq, end_seq, limit=1000):
+    """闭区间 [start_seq, end_seq] 的消息，按 seq 升序。"""
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT * FROM messages
+           WHERE conv_id = ? AND seq >= ? AND seq <= ?
+           ORDER BY seq ASC
+           LIMIT ?""",
+        (conv_id, start_seq, end_seq, limit),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
+def get_daily_stats(conv_id, tz_hours=8):
+    """按自然日（tz_hours 时区）统计消息量：[{date, count}, ...] 升序。"""
+    offset_sec = int(tz_hours * 3600)
+    conn = get_db()
+    rows = conn.execute(
+        """SELECT date(timestamp + ?, 'unixepoch') AS date, COUNT(*) AS count
+           FROM messages
+           WHERE conv_id = ?
+           GROUP BY date
+           ORDER BY date ASC""",
+        (offset_sec, conv_id),
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def get_senders(conv_id):
     """获取会话中的所有发送者 UID 及消息数量。"""
     conn = get_db()

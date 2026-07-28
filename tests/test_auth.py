@@ -70,3 +70,49 @@ def test_login_when_no_password_returns_400(client, monkeypatch):
     r = client.post("/api/auth/login", json={"password": "x"})
     assert r.status_code == 400
     assert r.json() == {"error": "no password set"}
+
+
+# ── Persistent API token: read-only /api/ access ──
+
+def _set_api_token(monkeypatch, token):
+    from common import config
+    monkeypatch.setattr(config, "get_api_token", lambda: token)
+
+
+def test_api_token_allows_get_api(client, monkeypatch, temp_db):
+    _set_password(monkeypatch, "secret")
+    _set_api_token(monkeypatch, "apitok")
+    r = client.get("/api/stats", headers={"Authorization": "Bearer apitok"})
+    assert r.status_code == 200
+
+
+def test_api_token_rejected_for_non_get(client, monkeypatch, temp_db):
+    _set_password(monkeypatch, "secret")
+    _set_api_token(monkeypatch, "apitok")
+    r = client.post("/api/conversations/c1/delete",
+                    headers={"Authorization": "Bearer apitok"})
+    assert r.status_code == 401
+    r = client.delete("/api/conversations/c1",
+                      headers={"Authorization": "Bearer apitok"})
+    assert r.status_code == 401
+
+
+def test_api_token_rejected_for_panel(client, monkeypatch, temp_db):
+    _set_password(monkeypatch, "secret")
+    _set_api_token(monkeypatch, "apitok")
+    r = client.get("/panel/api/status", headers={"Authorization": "Bearer apitok"})
+    assert r.status_code == 401
+
+
+def test_wrong_api_token_rejected(client, monkeypatch, temp_db):
+    _set_password(monkeypatch, "secret")
+    _set_api_token(monkeypatch, "apitok")
+    r = client.get("/api/stats", headers={"Authorization": "Bearer wrong"})
+    assert r.status_code == 401
+
+
+def test_no_api_token_configured_rejects(client, monkeypatch, temp_db):
+    _set_password(monkeypatch, "secret")
+    _set_api_token(monkeypatch, None)
+    r = client.get("/api/stats", headers={"Authorization": "Bearer anything"})
+    assert r.status_code == 401

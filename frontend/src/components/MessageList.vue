@@ -1,11 +1,11 @@
 <template>
-  <div class="msg-panel">
+  <div class="msg-panel" :class="{ 'msg-panel-static': isStatic }">
     <div v-if="!conversation" class="msg-empty">
       <div class="msg-empty-icon">💬</div>
       <div>选择一个会话查看聊天记录</div>
     </div>
     <template v-else>
-      <div class="msg-header">
+      <div class="msg-header" v-if="!isStatic">
         <h3>{{ conversation.name || '未命名' }}</h3>
         <span class="msg-total">{{ total }} 条消息</span>
         <button v-if="!selfUid && senders.length === 2" class="msg-pick-self" @click="showPicker = true">
@@ -35,13 +35,13 @@
         </div>
       </div>
 
-      <button v-if="hasMore && atLatest" class="msg-jump-fab msg-jump-top" @click="jumpToTop">
+      <button v-if="!isStatic && hasMore && atLatest" class="msg-jump-fab msg-jump-top" @click="jumpToTop">
         ↑ 最早消息
       </button>
-      <button v-if="!atLatest" class="msg-jump-fab msg-jump-bottom" @click="jumpToBottom">
+      <button v-if="!isStatic && !atLatest" class="msg-jump-fab msg-jump-bottom" @click="jumpToBottom">
         ↓ 最新消息
       </button>
-      <div class="msg-list" ref="listRef">
+      <div class="msg-list" :class="{ 'msg-list-static': isStatic }" ref="listRef">
         <div v-if="loading" class="msg-loading">加载中...</div>
         <div v-if="hasMore && !loading && atLatest" class="msg-load-more" @click="loadMore">
           ⬆ 加载更早消息
@@ -102,7 +102,7 @@
               </div>
               <!-- 表情包 -->
               <div v-if="msg.msg_type === 2 && getEmojiSrc(msg)" class="msg-media">
-                <img :src="getEmojiSrc(msg)" :alt="msg.content" loading="lazy" @click="openLightbox(getEmojiSrc(msg))" @error="onImgError" />
+                <img :src="getEmojiSrc(msg)" :alt="msg.content" :loading="imgLoading" @click="openLightbox(getEmojiSrc(msg))" @error="onImgError" />
               </div>
               <!-- 图片/视频：优先本地原文件，回退到 inline_pic 缩略图 -->
               <div v-else-if="msg.msg_type === 3" class="msg-media">
@@ -117,7 +117,7 @@
                   v-else-if="getImageSrc(msg)"
                   :src="getImageSrc(msg)"
                   alt="图片"
-                  loading="lazy"
+                  :loading="imgLoading"
                   @click="openLightbox(getImageSrc(msg))"
                 />
                 <div v-else class="msg-media-missing">[图片已失效]</div>
@@ -126,7 +126,7 @@
               <div v-else-if="msg.msg_type === 4" class="msg-share-card" @click="openShare(msg)">
                 <div v-if="getShareInfo(msg).comment || getShareInfo(msg).commentImg" class="msg-share-comment">
                   <span v-if="getShareInfo(msg).commentUser" class="msg-share-comment-user">{{ getShareInfo(msg).commentUser }}：</span>{{ getShareInfo(msg).comment }}
-                  <img v-if="getShareInfo(msg).commentImg" :src="getShareInfo(msg).commentImg" class="msg-share-comment-img" loading="lazy" @error="onImgError" />
+                  <img v-if="getShareInfo(msg).commentImg" :src="getShareInfo(msg).commentImg" class="msg-share-comment-img" :loading="imgLoading" @error="onImgError" />
                 </div>
                 <div class="msg-share-card-inner">
                   <div class="msg-share-card-body">
@@ -139,7 +139,7 @@
                     v-if="getShareInfo(msg).cover"
                     :src="getShareInfo(msg).cover"
                     class="msg-share-card-cover"
-                    loading="lazy"
+                    :loading="imgLoading"
                     @error="onImgError"
                   />
                 </div>
@@ -158,7 +158,7 @@
                   <img
                     v-if="getVideoPoster(msg)"
                     :src="getVideoPoster(msg)"
-                    loading="lazy"
+                    :loading="imgLoading"
                     @click="openLightbox(getVideoPoster(msg))"
                   />
                   <div v-else class="msg-media-missing">[视频]</div>
@@ -170,14 +170,14 @@
               </div>
               <!-- msg_type=1 但实际是贴纸/表情 JSON -->
               <div v-else-if="isJsonSticker(msg)" class="msg-media">
-                <img v-if="getStickerUrl(msg)" :src="getStickerUrl(msg)" loading="lazy" @error="onImgError" />
+                <img v-if="getStickerUrl(msg)" :src="getStickerUrl(msg)" :loading="imgLoading" @error="onImgError" />
                 <div v-else class="msg-media-missing">[贴纸]</div>
               </div>
               <!-- msg_type=1 但实际是分享卡片（JSON content 含 content_title） -->
               <div v-else-if="isJsonShare(msg)" class="msg-share-card" @click="openShare(msg)">
                 <div v-if="getShareInfo(msg).comment || getShareInfo(msg).commentImg" class="msg-share-comment">
                   <span v-if="getShareInfo(msg).commentUser" class="msg-share-comment-user">{{ getShareInfo(msg).commentUser }}：</span>{{ getShareInfo(msg).comment }}
-                  <img v-if="getShareInfo(msg).commentImg" :src="getShareInfo(msg).commentImg" class="msg-share-comment-img" loading="lazy" @error="onImgError" />
+                  <img v-if="getShareInfo(msg).commentImg" :src="getShareInfo(msg).commentImg" class="msg-share-comment-img" :loading="imgLoading" @error="onImgError" />
                 </div>
                 <div class="msg-share-card-inner">
                   <div class="msg-share-card-body">
@@ -190,7 +190,7 @@
                     v-if="getShareInfo(msg).cover"
                     :src="getShareInfo(msg).cover"
                     class="msg-share-card-cover"
-                    loading="lazy"
+                    :loading="imgLoading"
                     @error="onImgError"
                   />
                 </div>
@@ -278,8 +278,11 @@ const props = defineProps({
   conversation: Object,
   searchHighlight: String,
   jumpToSeq: Number,
+  // 截图模式：只加载 [startSeq, endSeq] 区间，隐藏交互 chrome，不绑定滚动
+  staticRange: Object,
+  selfUidOverride: String,
 })
-const emit = defineEmits(['jumped'])
+const emit = defineEmits(['jumped', 'staticLoaded'])
 
 const messages = ref([])
 const total = ref(0)
@@ -289,8 +292,10 @@ const hasMore = ref(false)
 const atLatest = ref(true)  // 当前是否在查看最新消息
 const listRef = ref(null)
 const senders = ref([])
-const selfUid = ref(localStorage.getItem('selfUid') || '')
+const selfUid = ref(props.selfUidOverride || localStorage.getItem('selfUid') || '')
 const showPicker = ref(false)
+const isStatic = computed(() => !!props.staticRange)
+const imgLoading = computed(() => (isStatic.value ? 'eager' : 'lazy'))
 
 // 用户信息缓存 { uid: { nickname, avatar_url, unique_id } }
 const userCache = reactive({})
@@ -615,6 +620,32 @@ function loadMore() {
   }
 }
 
+// 截图模式：一次性加载闭区间消息，等用户信息与引用卡片就绪后通知父组件
+async function fetchStaticRange(convId) {
+  loading.value = true
+  try {
+    const { startSeq, endSeq } = props.staticRange
+    const res = await fetch(
+      `/api/conversations/${convId}/messages/range?start_seq=${startSeq}&end_seq=${endSeq}`
+    )
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const data = await res.json()
+    clearCjCache()
+    messages.value = data.items
+    total.value = data.total
+    hasMore.value = false
+    atLatest.value = true
+    await loadUserInfoForMessages(data.items)
+    await loadSysRefs(data.items)
+  } catch (e) {
+    console.error('加载消息失败', e)
+  } finally {
+    loading.value = false
+  }
+  await nextTick()
+  emit('staticLoaded')
+}
+
 async function jumpToTop() {
   if (!props.conversation) return
   await fetchMessages(props.conversation.conv_id, null, 0)
@@ -653,6 +684,7 @@ function onListScroll() {
 }
 
 onMounted(() => {
+  if (isStatic.value) return
   // 延迟绑定，等 listRef 准备好
   const tryBind = () => {
     if (listRef.value) {
@@ -695,6 +727,10 @@ watch(() => props.conversation, (conv) => {
   if (conv) {
     messages.value = []
     clearCjCache()
+    if (isStatic.value) {
+      fetchStaticRange(conv.conv_id)
+      return
+    }
     fetchSenders(conv.conv_id)
     // 如果有 jumpToSeq，由 jumpToSeq watcher 处理加载
     if (!props.jumpToSeq) {
@@ -837,6 +873,18 @@ watch(() => props.jumpToSeq, async (seq) => {
   flex: 1;
   overflow-y: auto;
   padding: 16px 20px 32px;
+}
+
+/* 截图模式：容器随内容自然撑开，不滚动，供整页截图 */
+.msg-panel-static {
+  flex: none;
+  min-height: auto;
+  height: auto;
+}
+.msg-list-static {
+  flex: none;
+  overflow: visible;
+  height: auto;
 }
 
 .msg-loading, .msg-no-data {
