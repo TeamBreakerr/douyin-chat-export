@@ -24,7 +24,7 @@
         @click="showResults = false; $emit('navigate', item)"
       >
         <div class="result-conv">{{ item.sender_display_name || item.sender_name || '' }}</div>
-        <div class="result-content" v-html="highlight(item.content)"></div>
+        <div class="result-content" v-html="highlight(item.voice_transcription || item.content)"></div>
         <div class="result-meta">
           <span>{{ item.conv_name || '未知会话' }}</span>
           <span>{{ formatTime(item.timestamp) }}</span>

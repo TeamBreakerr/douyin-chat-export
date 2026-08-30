@@ -13,6 +13,7 @@ repoint it at a temp file with a single monkeypatch.
 import json
 import os
 import sqlite3
+import time
 
 from common import paths
 
@@ -69,9 +70,21 @@ def init_db():
             FOREIGN KEY (conv_id) REFERENCES conversations(conv_id)
         );
 
+        CREATE TABLE IF NOT EXISTS voice_transcriptions (
+            msg_id TEXT PRIMARY KEY,
+            message_id TEXT NOT NULL,
+            text_result TEXT NOT NULL DEFAULT '',
+            status TEXT NOT NULL DEFAULT 'success',
+            error TEXT,
+            updated_at INTEGER NOT NULL DEFAULT 0,
+            FOREIGN KEY (msg_id) REFERENCES messages(msg_id) ON DELETE CASCADE
+        );
+
         CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conv_id, timestamp);
         CREATE INDEX IF NOT EXISTS idx_messages_seq ON messages(conv_id, seq);
         CREATE INDEX IF NOT EXISTS idx_messages_content ON messages(content);
+        CREATE INDEX IF NOT EXISTS idx_voice_transcriptions_status
+            ON voice_transcriptions(status);
     """)
     # 迁移：为旧数据库添加 ref_msg 列
     try:
@@ -120,4 +133,29 @@ def update_conversation_stats(conn, conv_id):
              last_message_time = (SELECT MAX(timestamp) FROM messages WHERE conv_id = ?)
            WHERE conv_id = ?""",
         (conv_id, conv_id, conv_id),
+    )
+
+
+def upsert_voice_transcription(conn, msg_id, message_id, text_result="",
+                               status="success", error=None, updated_at=None):
+    """Insert or replace the native Douyin voice-recognition result.
+
+    ``text_result`` is allowed to be empty on a successful recognition (for
+    example, a silent recording), so callers must use ``status`` rather than
+    the text value to decide whether a message needs another request.
+    """
+    if updated_at is None:
+        updated_at = int(time.time())
+    conn.execute(
+        """INSERT INTO voice_transcriptions
+           (msg_id, message_id, text_result, status, error, updated_at)
+           VALUES (?, ?, ?, ?, ?, ?)
+           ON CONFLICT(msg_id) DO UPDATE SET
+             message_id=excluded.message_id,
+             text_result=excluded.text_result,
+             status=excluded.status,
+             error=excluded.error,
+             updated_at=excluded.updated_at""",
+        (str(msg_id), str(message_id), text_result or "", str(status), error,
+         int(updated_at)),
     )

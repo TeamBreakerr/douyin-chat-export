@@ -78,6 +78,16 @@ describe('sticker / voice / video detection', () => {
     expect(getVoiceDuration(v)).toBe(4)
     expect(getVoiceUrl(v)).toBe('http://v')
   })
+  it('voice: recognizes legacy text-typed rows and resource duration', () => {
+    const v = withCj({ resource_url: { uri: 'voice-uri', duration: '1200' } }, { msg_type: 1 })
+    expect(isVoiceMsg(v)).toBe(true)
+    expect(getVoiceDuration(v)).toBe(1)
+    expect(getVoiceUrl(v)).toBe('voice-uri')
+  })
+  it('voice: does not classify an image resource with a duration as audio', () => {
+    const image = withCj({ aweType: 2702, resource_url: { url_list: ['http://image'] }, duration: 1200 }, { msg_type: 3 })
+    expect(isVoiceMsg(image)).toBe(false)
+  })
   it('video: msg_type 5 or cj.video.vid; duration in seconds with ″', () => {
     expect(isJsonVideo(msg({ msg_type: 5 }))).toBe(true)
     expect(isJsonVideo(withCj({ video: { vid: 'v1' } }))).toBe(true)
