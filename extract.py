@@ -41,8 +41,7 @@ def run_export(args):
     from extractor.exporter import ChatLabExporter
 
     fmt = args["output_format"]
-    ext = ".json" if fmt == "json" else ".jsonl"
-    output_path = args["output_path"] or os.path.join("data", f"export{ext}")
+    output_path = args["output_path"]
 
     exporter = ChatLabExporter(
         conv_name=args["name_filter"],

@@ -4,10 +4,13 @@ Locks the exact output strings/types the exporter produces, so the P4 refactor
 (splitting the 240-line export() god-method into pure functions) cannot drift.
 """
 import json
+import os
+import re
 
 from extractor import exporter
 from extractor.exporter import (
     ChatLabExporter,
+    build_export_filename,
     _build_reply_to,
     _decode_sticker_name,
     _emoji_text_label,
@@ -188,3 +191,33 @@ def test_export_json_format_shape(temp_db, tmp_path):
     assert data["chatlab"]["version"] == "0.0.2"
     assert isinstance(data["members"], list)
     assert data["messages"][0]["content"] == "hi"
+
+
+def test_build_export_filename_is_safe_and_keeps_chatlab_extension():
+    jsonl_name = build_export_filename("测试会话:/私信", "jsonl", timestamp=0)
+    json_name = build_export_filename("CON", "json", timestamp=0)
+
+    assert re.fullmatch(r"测试会话_私信_\d{14}_export\.jsonl", jsonl_name)
+    assert re.fullmatch(r"_CON_\d{14}_export\.json", json_name)
+
+
+def test_export_without_output_path_uses_conversation_name_and_timestamp(temp_db, tmp_path):
+    import extractor.models as models
+
+    conn = models.get_db()
+    insert_conversation(conn, "c1", "测试会话", participant_uids='["owner"]')
+    conn.execute("INSERT INTO users (uid, nickname) VALUES ('owner','我')")
+    insert_message(conn, "m1", "c1", 1, sender_uid="owner", content="hi", msg_type=1)
+    conn.commit()
+    conn.close()
+
+    output = ChatLabExporter(
+        conv_name="测试会话",
+        output_format="jsonl",
+        output_dir=str(tmp_path),
+    ).export()
+
+    assert output is not None
+    assert output.startswith(str(tmp_path))
+    assert re.fullmatch(r"测试会话_\d{14}_export\.jsonl", os.path.basename(output))
+    assert os.path.exists(output)

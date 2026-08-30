@@ -21,6 +21,46 @@ CHATLAB_TYPE_MAP = {
 }
 
 
+_INVALID_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
+_WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+
+
+def _safe_filename_component(value: str | None, fallback: str = "conversation") -> str:
+    """Convert a conversation nickname into a portable filename component."""
+    component = str(value or "").strip()
+    component = _INVALID_FILENAME_CHARS_RE.sub("_", component)
+    component = re.sub(r"\s+", "_", component)
+    component = component.strip(" ._") or fallback
+    if component.upper() in _WINDOWS_RESERVED_NAMES:
+        component = f"_{component}"
+    # Leave room for the timestamp, suffix and extension on common filesystems.
+    return component[:80].rstrip(" ._") or fallback
+
+
+def build_export_filename(
+    username: str | None,
+    output_format: str = "jsonl",
+    timestamp: int | float | None = None,
+) -> str:
+    """Build a recognizable, filesystem-safe ChatLab export filename.
+
+    The timestamp is the export time (local time) and includes seconds so
+    repeated exports made in different seconds do not all become browser
+    ``(1)``/``(2)`` downloads.
+    """
+    export_time = time.localtime(time.time() if timestamp is None else timestamp)
+    stamp = time.strftime("%Y%m%d%H%M%S", export_time)
+    extension = ".json" if output_format == "json" else ".jsonl"
+    return f"{_safe_filename_component(username)}_{stamp}_export{extension}"
+
+
 _STICKER_HEX_RE = re.compile(r"-ts-([0-9a-fA-F]{4,})(?:\.[a-zA-Z0-9]{1,5})?$")
 
 
@@ -352,11 +392,17 @@ def _build_reply_to(ref_msg_raw) -> dict | None:
 
 
 class ChatLabExporter:
-    def __init__(self, conv_name: str = None, output_format: str = "jsonl"):
+    def __init__(
+        self,
+        conv_name: str = None,
+        output_format: str = "jsonl",
+        output_dir: str = "data",
+    ):
         self.conv_name = conv_name
         self.output_format = output_format  # "json" or "jsonl"
+        self.output_dir = output_dir
 
-    def export(self, output_path: str):
+    def export(self, output_path: str | None = None) -> str | None:
         conn = get_db()
 
         # Detect owner
@@ -382,6 +428,15 @@ class ChatLabExporter:
         conv_id = row["conv_id"]
         conv_name = row["name"]
         print(f"[*] 导出会话: {conv_name} (ID: {conv_id})")
+
+        exported_at = int(time.time())
+        if output_path is None:
+            output_path = os.path.join(
+                self.output_dir,
+                build_export_filename(conv_name or conv_id, self.output_format, exported_at),
+            )
+        else:
+            output_path = os.fspath(output_path)
 
         # Load messages ordered by seq
         messages = conn.execute(
@@ -421,7 +476,7 @@ class ChatLabExporter:
         header = {
             "chatlab": {
                 "version": "0.0.2",
-                "exportedAt": int(time.time()),
+                "exportedAt": exported_at,
                 "generator": "douyin-chat-export",
             },
             "meta": {
@@ -526,3 +581,4 @@ class ChatLabExporter:
             print(f"  引用/回复: {ref_count}")
         size_mb = os.path.getsize(output_path) / (1024 * 1024)
         print(f"  文件大小: {size_mb:.1f} MB")
+        return output_path

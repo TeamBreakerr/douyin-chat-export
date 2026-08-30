@@ -904,8 +904,7 @@ async def start_export(req: ExportRequest):
 
 def _do_export(fmt: str, filter_name: str, conversations: list | None):
     try:
-        from extractor.exporter import ChatLabExporter
-        import re
+        from extractor.exporter import ChatLabExporter, build_export_filename
         import zipfile
 
         ext = ".json" if fmt == "json" else ".jsonl"
@@ -921,18 +920,15 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
 
         if len(targets) <= 1:
             # Single file
-            output_path = os.path.join(data_dir, f"export{ext}")
-            # Remove stale file so a "conv not found" early-return doesn't look like success
-            if os.path.exists(output_path):
-                try:
-                    os.remove(output_path)
-                except Exception:
-                    pass
-            exporter = ChatLabExporter(conv_name=targets[0] or None, output_format=fmt)
-            exporter.export(output_path)
-            if not os.path.exists(output_path):
+            exporter = ChatLabExporter(
+                conv_name=targets[0] or None,
+                output_format=fmt,
+                output_dir=data_dir,
+            )
+            output_path = exporter.export()
+            if not output_path or not os.path.exists(output_path):
                 raise RuntimeError(f"未找到会话: {targets[0] or '(any)'}")
-            _export_state["file_path"] = f"export{ext}"
+            _export_state["file_path"] = os.path.basename(output_path)
             size_mb = os.path.getsize(output_path) / (1024 * 1024)
             _export_state["message"] = f"导出完成 ({size_mb:.1f} MB)"
         else:
@@ -947,9 +943,10 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
                     pass
 
             produced = []
+            exported_at = int(time.time())
             for name in targets:
-                safe = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", name)[:80] or "conv"
-                path = os.path.join(tmp_dir, f"{safe}{ext}")
+                filename = build_export_filename(name, fmt, exported_at)
+                path = os.path.join(tmp_dir, filename)
                 try:
                     ChatLabExporter(conv_name=name, output_format=fmt).export(path)
                     if os.path.exists(path):

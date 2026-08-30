@@ -239,6 +239,8 @@ python3 export.py --filter "会话名称" --format json      # JSON
 python3 export.py --filter "会话名称" --output data/export.jsonl
 ```
 
+未指定 `--output` 时，文件会自动命名为 `会话昵称_YYYYMMDDHHMMSS_export.jsonl`（或 `.json`）；显式指定输出路径时保留用户给出的文件名。
+
 导出内容：文本、表情、图片 URL、语音时长与转写文字、分享链接、引用/回复关系。也可在控制面板 **导出** 分区一键操作。
 
 语音转写在采集阶段自动执行：同一会话中未成功识别的语音会按批次调用抖音 Web IM 接口，结果保存到 `voice_transcriptions` 表。请求默认使用 `message_type=7`；若新抓取记录保留了 Web IM 的原始类型，则沿用该类型。对已经采集过的历史消息，重新执行一次增量采集即可补齐转写；已成功的结果会命中本地缓存，不会重复请求。
