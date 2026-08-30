@@ -209,6 +209,16 @@ def _get_content_json(msg) -> dict | None:
     return None
 
 
+def _message_field(msg, key: str, default=None):
+    """Read a field from either sqlite3.Row or a plain test dictionary."""
+    if isinstance(msg, dict):
+        return msg.get(key, default)
+    try:
+        return msg[key]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
 def _resolve_message(msg, cj: dict | None, media_dir: str) -> tuple:
     """Decide the ChatLab content + type for one DB message.
 
@@ -225,11 +235,38 @@ def _resolve_message(msg, cj: dict | None, media_dir: str) -> tuple:
     # 语音消息：msg_type=0 但有 resource_url + duration
     # 不再嵌 base64 / CDN URL —— 对 LLM 无意义且每条几百 KB；用纯文字标签即可。
     is_voice = False
-    if cj and cj.get("resource_url") and cj.get("duration"):
+    voice_resource = cj.get("resource_url") if cj else None
+    voice_duration = cj.get("duration") if cj else None
+    if voice_duration in (None, "") and isinstance(voice_resource, dict):
+        voice_duration = voice_resource.get("duration")
+    video_payload = cj.get("video") if isinstance(cj, dict) else None
+    has_video_payload = (
+        isinstance(video_payload, dict) and bool(video_payload.get("vid"))
+    )
+    is_image_payload = bool(
+        cj and str(cj.get("aweType")) in {"2702", "2703", "2704"}
+    )
+    if (
+        voice_resource is not None
+        and voice_duration not in (None, "")
+        and not has_video_payload
+        and not is_image_payload
+    ):
         is_voice = True
         chatlab_type = 0  # TEXT
-        dur_sec = round(cj["duration"] / 1000)
-        content = f"[语音 {dur_sec}秒]" if dur_sec else "[语音]"
+        try:
+            dur_sec = round(float(voice_duration) / 1000)
+        except (TypeError, ValueError):
+            dur_sec = 0
+        voice_label = f"[语音 {dur_sec}秒]" if dur_sec else "[语音]"
+        transcription = _message_field(msg, "voice_transcription", "")
+        transcription_status = _message_field(
+            msg, "voice_transcription_status", None
+        )
+        if transcription_status not in (None, "", "success"):
+            transcription = ""
+        transcription = transcription.strip() if isinstance(transcription, str) else ""
+        content = f"{voice_label} {transcription}" if transcription else voice_label
         stats["voice"] = 1
 
     # 视频消息：msg_type=5 (新分类) 或 cj.video.vid 兜底（老数据）
@@ -348,7 +385,13 @@ class ChatLabExporter:
 
         # Load messages ordered by seq
         messages = conn.execute(
-            "SELECT * FROM messages WHERE conv_id = ? ORDER BY seq ASC",
+            """SELECT m.*,
+                      vt.text_result AS voice_transcription,
+                      vt.status AS voice_transcription_status,
+                      vt.error AS voice_transcription_error
+               FROM messages m
+               LEFT JOIN voice_transcriptions vt ON vt.msg_id = m.msg_id
+               WHERE m.conv_id = ? ORDER BY m.seq ASC""",
             (conv_id,),
         ).fetchall()
 

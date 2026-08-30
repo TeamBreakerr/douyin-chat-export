@@ -26,6 +26,7 @@ from common import paths
 from extractor.models import (
     init_db, get_db, upsert_user, upsert_conversation, update_conversation_stats,
 )
+from extractor.voice_transcriber import VoiceTranscriber
 
 CHAT_URL = "https://www.douyin.com/chat?isPopup=1"
 USER_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "browser_profile")
@@ -1287,8 +1288,17 @@ class WebChatScraper:
         """
         conn = self._db_conn
         conn.execute("DROP TABLE IF EXISTS temp.msg_backup")
+        conn.execute("DROP TABLE IF EXISTS temp.voice_transcription_backup")
         conn.execute(
             "CREATE TEMP TABLE msg_backup AS SELECT * FROM messages WHERE conv_id = ?",
+            (conv_id,),
+        )
+        # 语音转写与消息一起回滚；全量抓取在窗口期失败时不能丢掉已完成的转写。
+        conn.execute(
+            """CREATE TEMP TABLE voice_transcription_backup AS
+               SELECT vt.* FROM voice_transcriptions vt
+               JOIN messages m ON m.msg_id = vt.msg_id
+               WHERE m.conv_id = ?""",
             (conv_id,),
         )
         return conn.execute("SELECT COUNT(*) FROM temp.msg_backup").fetchone()[0]
@@ -1299,17 +1309,28 @@ class WebChatScraper:
         一个会话在抖音那边真的被清空、导致抓到 0 条的概率，远低于抓取本身出问题。
         宁可留着旧记录（要清空有面板的删除功能），也不能让一次失败的抓取把历史抹掉。
         """
-        if not backed_up:
-            return
         conn = self._db_conn
+        if not backed_up:
+            # _backup_conv_messages creates both TEMP tables even when the
+            # message snapshot is empty.  Always clean them up so a later
+            # full scrape on the same connection can create a fresh backup.
+            conn.execute("DROP TABLE IF EXISTS temp.msg_backup")
+            conn.execute("DROP TABLE IF EXISTS temp.voice_transcription_backup")
+            conn.commit()
+            return
         remaining = conn.execute(
             "SELECT COUNT(*) FROM messages WHERE conv_id = ?", (conv_id,)
         ).fetchone()[0]
         if remaining == 0:
             conn.execute("INSERT INTO messages SELECT * FROM temp.msg_backup")
+            conn.execute(
+                """INSERT OR REPLACE INTO voice_transcriptions
+                   SELECT * FROM temp.voice_transcription_backup"""
+            )
             update_conversation_stats(conn, conv_id)
             print(f"  [!] 本次全量抓取一条消息都没拿到，已还原原有的 {backed_up} 条旧消息")
         conn.execute("DROP TABLE IF EXISTS temp.msg_backup")
+        conn.execute("DROP TABLE IF EXISTS temp.voice_transcription_backup")
         conn.commit()
 
 
@@ -1707,7 +1728,34 @@ class WebChatScraper:
                     cj = json.loads(content_json)
                     awe_type = cj.get("aweType", -1)
                     text = cj.get("text", "") or cj.get("description", "")
-                    if awe_type in (500, 501, 507, 508, 510, 514, 516):
+                    # Voice payloads currently use aweType=0 on the web.  Do
+                    # this test before the generic aweType=0 text branch, or
+                    # they are stored as msg_type=1 and never transcribed.
+                    voice_resource = cj.get("resource_url")
+                    voice_duration = cj.get("duration")
+                    if (
+                        isinstance(voice_resource, dict)
+                        and voice_duration in (None, "")
+                    ):
+                        voice_duration = voice_resource.get("duration")
+                    if (
+                        isinstance(voice_resource, dict)
+                        and voice_duration not in (None, "")
+                        and not (
+                            isinstance(cj.get("video"), dict)
+                            and cj.get("video", {}).get("vid")
+                        )
+                        and cj.get("aweType") not in (
+                            2702, 2703, 2704, "2702", "2703", "2704"
+                        )
+                    ):
+                        msg_type = "other"  # keep DB type=0 for voice
+                        try:
+                            dur_sec = round(float(voice_duration) / 1000)
+                        except (TypeError, ValueError):
+                            dur_sec = 0
+                        text = text or (f"[语音 {dur_sec}秒]" if dur_sec else "[语音]")
+                    elif awe_type in (500, 501, 507, 508, 510, 514, 516):
                         # 表情包/贴纸
                         msg_type = "emoji"
                         if not text:
@@ -1762,11 +1810,6 @@ class WebChatScraper:
                     elif awe_type >= 100000:
                         msg_type = "other"
                         text = text or cj.get("push_detail") or "[系统消息]"
-                    elif cj.get("resource_url") and cj.get("duration"):
-                        # 语音消息：有 resource_url 和 duration
-                        msg_type = "other"  # 保持 type=0，前端会检测 resource_url
-                        dur_sec = round(cj["duration"] / 1000)
-                        text = text or f"[语音 {dur_sec}秒]"
                     elif cj.get("video", {}).get("vid") and cj.get("poster", {}).get("origin_url_list"):
                         # 视频消息：awe_type=0 的视频走单独路径，cj.video.vid + cj.poster
                         # 真正的视频流要 vid → 加密 URL 反查（待办），目前只下载 poster 封面图
@@ -1802,7 +1845,7 @@ class WebChatScraper:
                 ref_msg = m.get("_ref_msg")
                 ref_msg_json = json.dumps(ref_msg, ensure_ascii=False) if ref_msg else None
 
-                converted.append({
+                converted_message = {
                     "server_id": m.get("server_id", ""),
                     "content": text,
                     "msg_type": msg_type,
@@ -1820,7 +1863,12 @@ class WebChatScraper:
                     "is_recalled": m.get("is_recalled", 0),
                     "content_json": content_json,
                     "ref_msg": ref_msg_json,
-                })
+                }
+                # Keep the original protobuf type in raw_data when present.
+                # Older rows without it fall back to message_type=7.
+                if m.get("type_code") is not None:
+                    converted_message["type_code"] = m["type_code"]
+                converted.append(converted_message)
 
             # 下载语音文件
             await self._download_voice_files(converted)
@@ -1859,13 +1907,31 @@ class WebChatScraper:
                 print(f"  [*] 已到达聊天记录起点")
                 break
 
-        # 5. 补全发送者身份（群聊必需）。失败不能影响已抓到的消息。
+        # 5. 原生语音识别使用同一浏览器上下文的 cookies；放在消息落库之后，
+        # 既能覆盖本次抓到的语音，也能顺便补识别此前已经保存的历史语音。
+        try:
+            voice_stats = await self._transcribe_voice_messages(conv_id, api_cursor)
+            if voice_stats.get("voices"):
+                print(
+                    "  [voice] 识别统计: "
+                    f"总数={voice_stats['voices']} "
+                    f"缓存={voice_stats['cached']} "
+                    f"请求={voice_stats['requested']} "
+                    f"成功={voice_stats['succeeded']} "
+                    f"失败={voice_stats['failed']} "
+                    f"跳过={voice_stats['skipped']}"
+                )
+        except Exception as e:
+            # 转写失败不应回滚已经抓到的聊天记录。
+            print(f"  [!] 原生语音识别失败（消息已保存）: {e}")
+
+        # 6. 补全发送者身份（群聊必需）。失败不能影响已抓到的消息。
         try:
             await self._resolve_sender_identities(sec_by_uid)
         except Exception as e:
             print(f"  [!] 补全发送者信息失败: {e}")
 
-        # 6. 归一化 seq
+        # 7. 归一化 seq
         print(f"  [*] 归一化消息序号 (按服务端排序)...")
         rows = self._db_conn.execute(
             "SELECT msg_id FROM messages WHERE conv_id = ? ORDER BY seq ASC",
@@ -1882,6 +1948,12 @@ class WebChatScraper:
         elapsed = time.time() - start_time
         print(f"  [*] API 获取完成: {total_fetched} 条消息, {total_saved} 条新增, 耗时 {elapsed:.1f}s")
         return total_saved
+
+    async def _transcribe_voice_messages(self, conv_id, conv_short_id):
+        """识别当前会话中尚未成功处理的语音消息。"""
+        return await VoiceTranscriber(
+            self.page, self._db_conn
+        ).transcribe_conversation(conv_id, conv_short_id)
 
     @staticmethod
     def _make_msg_id(conv_id, msg):

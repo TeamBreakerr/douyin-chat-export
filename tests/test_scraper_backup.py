@@ -82,3 +82,24 @@ def test_no_backup_no_restore(temp_db):
 
     assert conn.execute(
         "SELECT COUNT(*) FROM messages WHERE conv_id = ?", (CONV,)).fetchone()[0] == 0
+
+
+def test_repeated_empty_backups_clean_up_voice_temp_table(temp_db):
+    """An empty full-scrape backup must not poison the next run."""
+    conn = connect(foreign_keys=True)
+    upsert_conversation(conn, CONV, name="空会话")
+    conn.commit()
+    s = _scraper_with(conn)
+
+    assert s._backup_conv_messages(CONV) == 0
+    s._restore_conv_messages_if_empty(CONV, 0)
+
+    # The second backup uses the same connection and should be able to create
+    # both temporary tables again without an "already exists" error.
+    assert s._backup_conv_messages(CONV) == 0
+    s._restore_conv_messages_if_empty(CONV, 0)
+
+    temp_tables = conn.execute(
+        "SELECT name FROM sqlite_temp_master WHERE type='table'"
+    ).fetchall()
+    assert temp_tables == []

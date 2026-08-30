@@ -197,8 +197,13 @@
               </div>
               <!-- 语音消息 -->
               <div v-else-if="isVoiceMsg(msg)" class="msg-voice">
-                <audio controls preload="none" :src="getVoiceUrl(msg)"></audio>
-                <span class="msg-voice-dur">{{ getVoiceDuration(msg) }}″</span>
+                <div class="msg-voice-player">
+                  <audio controls preload="none" :src="getVoiceUrl(msg)"></audio>
+                  <span class="msg-voice-dur">{{ getVoiceDuration(msg) }}″</span>
+                </div>
+                <div v-if="msg.voice_transcription" class="msg-voice-transcript">
+                  <span v-html="highlightText(msg.voice_transcription)"></span>
+                </div>
               </div>
               <!-- 评论引用视频（aweType=700，文本+关联视频） -->
               <div v-else-if="isVideoComment(msg)" class="msg-share-card" @click="openShare(msg)">
@@ -1101,9 +1106,15 @@ watch(() => props.jumpToSeq, async (seq) => {
 /* 语音消息 */
 .msg-voice {
   display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 5px;
+  padding: 4px 0;
+}
+.msg-voice-player {
+  display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
 }
 .msg-voice audio {
   height: 36px;
@@ -1113,6 +1124,14 @@ watch(() => props.jumpToSeq, async (seq) => {
   font-size: 12px;
   color: var(--text-muted);
   white-space: nowrap;
+}
+.msg-voice-transcript {
+  max-width: 360px;
+  color: var(--text-primary);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* 表情/图片 */

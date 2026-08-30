@@ -4,7 +4,7 @@
 //
 // The message shape: { msg_id, msg_type, content, raw_data (JSON string with a
 // (often double-encoded) content_json), sender_uid, sender_name, timestamp,
-// media_local_path, media_url, ref_msg }.
+// media_local_path, media_url, ref_msg, voice_transcription }.
 
 // Cache parsed content_json by msg_id (cleared on conversation switch/jump).
 const cjCache = new Map()
@@ -254,31 +254,49 @@ export function isRecalled(msg) {
   } catch { return false }
 }
 
-// Voice-message detection (msg_type stays 0/other; identified by resource_url).
-export function isVoiceMsg(msg) {
+function getVoiceContent(msg) {
   const cj = getContentJson(msg)
-  if (cj?.resource_url?.url_list?.length) return true
+  if (cj) return cj
   if (msg.content?.startsWith('{') && msg.content.includes('resource_url')) {
-    try { const o = JSON.parse(msg.content); return !!o.resource_url?.url_list?.length } catch {}
+    try { return JSON.parse(msg.content) } catch {}
   }
-  return false
+  return null
+}
+
+// Voice messages normally stay msg_type=0/other and carry resource_url plus
+// duration.  Also recognize legacy rows that an older scraper stored as
+// msg_type=1, including payloads where only tkey/voice_wave was retained.
+export function isVoiceMsg(msg) {
+  const cj = getVoiceContent(msg)
+  const resource = cj?.resource_url
+  if (!resource || (typeof resource !== 'object' && typeof resource !== 'string')) return false
+  if (['2702', '2703', '2704'].includes(String(cj.aweType)) && !cj.voice_wave && !cj.tkey && !resource.is_voice) return false
+  if (cj.video?.vid && !cj.voice_wave && !cj.tkey && !resource.is_voice) return false
+  const hasUrl = Array.isArray(resource.url_list) && resource.url_list.length > 0
+  const hasDuration = (cj.duration !== undefined && cj.duration !== null && cj.duration !== '') ||
+    (resource.duration !== undefined && resource.duration !== null && resource.duration !== '')
+  const hasVoiceMarker = !!(cj.tkey || cj.voice_wave || resource.is_voice)
+  const storedVoiceType = msg.msg_type === 0 || msg.msg_type === 'other' || msg.msg_type === undefined || msg.msg_type === null
+  return storedVoiceType ? (hasUrl || hasDuration || hasVoiceMarker) : (hasDuration || hasVoiceMarker)
 }
 
 export function getVoiceUrl(msg) {
-  const cj = getContentJson(msg)
+  const source = getVoiceContent(msg)
   // Guard JSON.parse: malformed content that merely starts with '{' must not
   // throw during render (matches getVoiceDuration below).
-  const source = cj || (msg.content?.startsWith('{') ? (() => { try { return JSON.parse(msg.content) } catch { return null } })() : null)
-  if (!source?.resource_url?.url_list?.length) return ''
   if (msg.media_local_path) return `/media/${msg.media_local_path}`
-  return source.resource_url.url_list[0]
+  const resource = source?.resource_url
+  if (typeof resource === 'string') return resource
+  if (!resource || typeof resource !== 'object') return ''
+  return resource.url_list?.[0] || resource.url || resource.uri || ''
 }
 
 export function getVoiceDuration(msg) {
-  const cj = getContentJson(msg)
-  const source = cj || (msg.content?.startsWith('{') ? (() => { try { return JSON.parse(msg.content) } catch { return null } })() : null)
-  if (!source?.duration) return '?'
-  return Math.round(source.duration / 1000)
+  const source = getVoiceContent(msg)
+  const duration = source?.duration ?? source?.resource_url?.duration
+  if (duration === undefined || duration === null || duration === '') return '?'
+  const seconds = Number(duration) / 1000
+  return Number.isFinite(seconds) ? Math.round(seconds) : '?'
 }
 
 // Reply/quote parsing (new field-18 format + legacy formats).
