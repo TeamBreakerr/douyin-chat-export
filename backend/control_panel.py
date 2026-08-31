@@ -2,8 +2,11 @@
 import asyncio
 import json
 import os
+import sqlite3
 import sys
+import tempfile
 import time
+from threading import Lock
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, FileResponse
@@ -67,6 +70,11 @@ _export_state = {
     "file_path": None,
     "message": "",
 }
+
+# Database export/import replaces a single SQLite file. Keep the file swap
+# serialized with snapshots and retain a rollback copy of the previous file.
+_DATABASE_FILE_LOCK = Lock()
+_DATABASE_IMPORT_MAX_BYTES = 2 * 1024 * 1024 * 1024
 
 # ── Scheduler state ──
 _scheduler_state = {
@@ -914,6 +922,7 @@ async def start_export(req: ExportRequest):
         return JSONResponse({"error": "Export already running"}, status_code=409)
 
     _export_state["status"] = "running"
+    _export_state["file_path"] = None
     _export_state["message"] = "正在导出..."
 
     # Persist selection
@@ -932,12 +941,213 @@ async def start_export(req: ExportRequest):
     }
 
 
+@control_router.post("/api/database/import")
+async def import_database(request: Request):
+    """Validate and atomically replace the local SQLite database."""
+    conflict = _database_job_conflict()
+    if conflict:
+        return JSONResponse({"error": conflict}, status_code=409)
+
+    content_length = request.headers.get("content-length")
+    try:
+        if content_length and int(content_length) > _DATABASE_IMPORT_MAX_BYTES:
+            return JSONResponse({"error": "导入文件过大"}, status_code=413)
+    except ValueError:
+        pass
+
+    content_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
+    allowed_types = {"", "application/octet-stream", "application/x-sqlite3", "application/vnd.sqlite3"}
+    if content_type not in allowed_types:
+        return JSONResponse({"error": "请上传 SQLite 数据库文件"}, status_code=415)
+
+    os.makedirs(paths.DATA_DIR, exist_ok=True)
+    fd, staged_path = tempfile.mkstemp(
+        prefix=".chat_database_import_", suffix=".db", dir=paths.DATA_DIR
+    )
+    size = 0
+    try:
+        with os.fdopen(fd, "wb") as staged:
+            async for chunk in request.stream():
+                if not chunk:
+                    continue
+                size += len(chunk)
+                if size > _DATABASE_IMPORT_MAX_BYTES:
+                    return JSONResponse({"error": "导入文件过大"}, status_code=413)
+                staged.write(chunk)
+
+        if size == 0:
+            return JSONResponse({"error": "导入文件为空"}, status_code=400)
+
+        try:
+            _validate_database_file(staged_path)
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            return JSONResponse({"error": f"数据库校验失败: {exc}"}, status_code=400)
+
+        try:
+            backup_name = _install_database(staged_path)
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            return JSONResponse({"error": f"数据库替换失败: {exc}"}, status_code=500)
+
+        message = "数据库导入完成，已覆盖当前数据库"
+        if backup_name:
+            message += f"；旧数据库已备份为 {backup_name}"
+        return {"status": "ok", "message": message, "backup_file": backup_name}
+    finally:
+        try:
+            os.remove(staged_path)
+        except FileNotFoundError:
+            pass
+
+
+def _database_job_conflict() -> str | None:
+    """Return a user-facing reason why replacing the DB is unsafe now."""
+    if _scrape_state["status"] == "running":
+        return "采集任务正在运行，请完成后再导入数据库"
+    if _backfill_state["status"] == "running":
+        return "历史图片下载正在运行，请完成后再导入数据库"
+    if _video_backfill_state["status"] == "running":
+        return "历史视频下载正在运行，请完成后再导入数据库"
+    if _export_state["status"] == "running":
+        return "导出任务正在运行，请完成后再导入数据库"
+    return None
+
+
+def _database_snapshot(output_path: str) -> None:
+    """Create a consistent standalone SQLite snapshot, including WAL data."""
+    temp_path = f"{output_path}.tmp"
+    try:
+        with _DATABASE_FILE_LOCK:
+            source = sqlite3.connect(paths.DB_PATH)
+            target = sqlite3.connect(temp_path)
+            try:
+                source.execute("PRAGMA busy_timeout=10000")
+                source.backup(target, pages=1000, sleep=0.05)
+            finally:
+                target.close()
+                source.close()
+            os.replace(temp_path, output_path)
+    except Exception:
+        try:
+            os.remove(temp_path)
+        except FileNotFoundError:
+            pass
+        raise
+
+
+def _do_database_export() -> str:
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    filename = f"chat_database_{timestamp}.db"
+    output_path = os.path.join(paths.DATA_DIR, filename)
+    collision_index = 2
+    while os.path.exists(output_path):
+        filename = f"chat_database_{timestamp}_{collision_index}.db"
+        output_path = os.path.join(paths.DATA_DIR, filename)
+        collision_index += 1
+    os.makedirs(paths.DATA_DIR, exist_ok=True)
+    _database_snapshot(output_path)
+    return output_path
+
+
+def _validate_database_file(path: str) -> None:
+    """Validate an uploaded SQLite file before it can replace chat.db."""
+    required_columns = {
+        "users": {"uid"},
+        "conversations": {"conv_id", "name"},
+        "messages": {"msg_id", "conv_id", "raw_data"},
+    }
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        check = conn.execute("PRAGMA quick_check").fetchone()
+        if not check or check[0] != "ok":
+            raise ValueError("数据库完整性检查未通过")
+        foreign_key_errors = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if foreign_key_errors:
+            raise ValueError("数据库外键完整性检查未通过")
+        for table, columns in required_columns.items():
+            row = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+                (table,),
+            ).fetchone()
+            if not row:
+                raise ValueError(f"数据库缺少表: {table}")
+            actual = {item[1] for item in conn.execute(f"PRAGMA table_info({table})")}
+            missing = columns - actual
+            if missing:
+                raise ValueError(f"数据库表 {table} 缺少字段: {', '.join(sorted(missing))}")
+    finally:
+        conn.close()
+
+
+def _move_if_exists(source: str, target: str) -> bool:
+    if not os.path.exists(source):
+        return False
+    os.replace(source, target)
+    return True
+
+
+def _install_database(staged_path: str) -> str | None:
+    """Atomically install a validated DB and keep the previous one recoverable."""
+    db_path = paths.DB_PATH
+    timestamp = time.strftime("%Y%m%d_%H%M%S")
+    backup_path = os.path.join(paths.DATA_DIR, f"chat_database_before_import_{timestamp}.db")
+    suffixes = ("-wal", "-shm")
+    moved_sidecars: list[tuple[str, str]] = []
+    moved_db = False
+    installed = False
+
+    if os.path.exists(backup_path):
+        index = 2
+        while os.path.exists(backup_path):
+            backup_path = os.path.join(
+                paths.DATA_DIR,
+                f"chat_database_before_import_{timestamp}_{index}.db",
+            )
+            index += 1
+
+    with _DATABASE_FILE_LOCK:
+        try:
+            if os.path.exists(db_path):
+                os.replace(db_path, backup_path)
+                moved_db = True
+            for suffix in suffixes:
+                old_sidecar = db_path + suffix
+                backup_sidecar = backup_path + suffix
+                if _move_if_exists(old_sidecar, backup_sidecar):
+                    moved_sidecars.append((old_sidecar, backup_sidecar))
+            os.replace(staged_path, db_path)
+            installed = True
+
+            from common.db import init_db
+            init_db()
+        except Exception:
+            try:
+                if os.path.exists(db_path) and installed:
+                    os.remove(db_path)
+                if moved_db and os.path.exists(backup_path):
+                    os.replace(backup_path, db_path)
+                for original, backup in reversed(moved_sidecars):
+                    if os.path.exists(backup):
+                        os.replace(backup, original)
+            finally:
+                raise
+
+    return os.path.basename(backup_path) if moved_db else None
+
+
 def _do_export(fmt: str, filter_name: str, conversations: list | None):
     try:
         from extractor.exporter import ChatLabExporter, build_export_filename
         import zipfile
 
         data_dir = paths.DATA_DIR
+
+        if fmt == "database":
+            output_path = _do_database_export()
+            _export_state["file_path"] = os.path.basename(output_path)
+            size_mb = os.path.getsize(output_path) / (1024 * 1024)
+            _export_state["message"] = f"数据库导出完成 ({size_mb:.1f} MB)"
+            _export_state["status"] = "completed"
+            return
 
         # Decide targets
         if conversations:

@@ -346,7 +346,7 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
       <div class="nav-item active" data-page="overview" onclick="showPage('overview')"><span class="ico">◫</span><span data-i18n="navOverview">概览</span></div>
       <div class="nav-item" data-page="scrape" onclick="showPage('scrape')"><span class="ico">⭳</span><span data-i18n="navScrape">采集</span></div>
       <div class="nav-item" data-page="schedule" onclick="showPage('schedule')"><span class="ico">◷</span><span data-i18n="navSchedule">定时</span></div>
-      <div class="nav-item" data-page="export" onclick="showPage('export')"><span class="ico">⤓</span><span data-i18n="navExport">导出</span></div>
+      <div class="nav-item" data-page="export" onclick="showPage('export')"><span class="ico">⤓</span><span data-i18n="navExport">导出/导入</span></div>
       <div class="nav-item" data-page="login" onclick="showPage('login')"><span class="ico">◉</span><span data-i18n="navLogin">登录</span></div>
       <div class="nav-item" data-page="settings" onclick="showPage('settings')"><span class="ico">⚙</span><span data-i18n="navSettings">设置</span></div>
     </nav>
@@ -486,17 +486,20 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 
     <!-- Export (export + media) -->
     <div class="panel-page" id="page-export">
-      <div class="page-head"><h1 data-i18n="exportTitle">导出</h1></div>
+      <div class="page-head"><h1 data-i18n="exportTitle">导出/导入</h1></div>
   <div class="section">
-    <h2><span data-i18n="exportTitle">导出</span> <span class="status status-idle" id="exportStatus" data-i18n="idle">闲置</span></h2>
+    <h2><span data-i18n="exportTitle">导出/导入</span> <span class="status status-idle" id="exportStatus" data-i18n="idle">闲置</span></h2>
     <div class="row">
-      <select id="exportFormat">
+      <select id="exportFormat" onchange="updateExportMode()">
         <option value="jsonl">JSONL</option>
         <option value="json">JSON</option>
+        <option value="database" data-i18n="databaseFormat">整个数据库（SQLite，可导入）</option>
       </select>
       <button class="btn btn-primary" id="exportBtn" onclick="startExport()" data-i18n="exportBtn">导出</button>
       <a class="btn btn-success" id="downloadBtn" style="display:none;text-decoration:none" href="/panel/api/export/download" data-i18n="download">下载</a>
     </div>
+    <div class="meta" id="databaseExportHint" style="display:none;margin-top:6px" data-i18n="databaseExportHint">整库导出会生成一个可在本面板覆盖导入的 SQLite 文件。</div>
+    <div id="exportConversationOptions">
     <div class="conv-list-toolbar" style="margin-top:10px;">
       <span data-i18n="selectConvsLabel">选择会话:</span>
       <a href="#" onclick="selectAllConvs('export',true);return false;" data-i18n="selectAll">全选</a>
@@ -506,7 +509,17 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
       <span id="exportConvCount">0 / 0</span>
     </div>
     <div class="conv-list-box" id="exportConvList"></div>
+    </div>
     <div class="meta" id="exportMsg"></div>
+  </div>
+  <div class="section">
+    <h2 data-i18n="databaseImportTitle">数据库覆盖导入</h2>
+    <div class="meta" style="margin-bottom:10px" data-i18n="databaseImportDesc">选择之前导出的 SQLite 文件。导入会覆盖当前数据库，导入前会自动保留一份旧数据库备份。</div>
+    <div class="row">
+      <input type="file" id="databaseImportFile" accept=".db,.sqlite,.sqlite3,application/octet-stream">
+      <button class="btn btn-danger" id="databaseImportBtn" onclick="importDatabase()" data-i18n="databaseImportBtn">导入并覆盖数据库</button>
+    </div>
+    <div class="meta" id="databaseImportMsg" style="margin-top:6px"></div>
   </div>
     </div>
 
@@ -586,7 +599,7 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 const T = {
   zh: {
     appTitle: '抖音聊天记录导出',
-    navOverview: '概览', navScrape: '采集', navSchedule: '定时', navExport: '导出', navLogin: '登录', navSettings: '设置',
+    navOverview: '概览', navScrape: '采集', navSchedule: '定时', navExport: '导出/导入', navLogin: '登录', navSettings: '设置',
     overviewDesc: '导出统计与快捷状态。',
     chatViewer: '聊天查看器 →',
     panelTitle: '控制面板',
@@ -623,9 +636,18 @@ const T = {
     cron6h: '每 6 小时',
     cron8am8pm: '每天 8 点 & 20 点',
     cronMon: '周一 02:30',
-    exportTitle: '导出',
+    exportTitle: '导出/导入',
     exportBtn: '导出',
     download: '下载',
+    databaseFormat: '整个数据库（SQLite，可导入）',
+    databaseExportHint: '整库导出会生成一个可在本面板覆盖导入的 SQLite 文件。',
+    databaseImportTitle: '数据库覆盖导入',
+    databaseImportDesc: '选择之前导出的 SQLite 文件。导入会覆盖当前数据库，导入前会自动保留一份旧数据库备份。',
+    databaseImportBtn: '导入并覆盖数据库',
+    databaseImportEmpty: '请选择 SQLite 数据库文件',
+    databaseImportRunning: '正在导入数据库，请稍候...',
+    databaseImportSuccess: '数据库导入完成，请刷新会话列表。',
+    confirmDatabaseImport: '导入会覆盖当前数据库，导入前会自动保留旧数据库备份。确定继续吗？',
     passwordTitle: '密码',
     passwordDesc: '设置密码以保护聊天查看器和控制面板。',
     enterPassword: '输入密码',
@@ -664,6 +686,7 @@ const T = {
     discoveredAt: (t) => '最近刷新: ' + t,
     discovered: (n) => '发现 ' + n + ' 个会话',
     confirmMultiExport: (n) => '将导出 ' + n + ' 个会话并打包为 zip，是否继续？',
+    confirmFullScrape: '全量采集会先删除目标会话的本地消息，再写入抖音当前能提供的记录。抖音通常只保留约一年，超过一年的本地历史可能丢失。建议先导出整库备份。确定继续？',
     mediaTitle: '媒体下载',
     mediaDesc: '采集时将图片/表情包下载到本地，避免抖音 CDN 链接过期后无法显示。',
     autoDownloadNew: '新采集消息自动下载图片到本地',
@@ -686,7 +709,7 @@ const T = {
   },
   en: {
     appTitle: 'Douyin Chat Export',
-    navOverview: 'Overview', navScrape: 'Scrape', navSchedule: 'Schedule', navExport: 'Export', navLogin: 'Login', navSettings: 'Settings',
+    navOverview: 'Overview', navScrape: 'Scrape', navSchedule: 'Schedule', navExport: 'Export / Import', navLogin: 'Login', navSettings: 'Settings',
     overviewDesc: 'Export stats and quick status.',
     chatViewer: 'Chat Viewer →',
     panelTitle: 'Control Panel',
@@ -723,9 +746,18 @@ const T = {
     cron6h: 'Every 6 hours',
     cron8am8pm: '8AM & 8PM',
     cronMon: 'Mon 2:30AM',
-    exportTitle: 'Export',
+    exportTitle: 'Export / Import',
     exportBtn: 'Export',
     download: 'Download',
+    databaseFormat: 'Entire database (SQLite, importable)',
+    databaseExportHint: 'The full export is a SQLite file that can be imported here to replace the database.',
+    databaseImportTitle: 'Replace database by import',
+    databaseImportDesc: 'Choose a SQLite file exported earlier. Import replaces the current database and keeps an automatic backup of the old one.',
+    databaseImportBtn: 'Import and replace database',
+    databaseImportEmpty: 'Choose a SQLite database file first',
+    databaseImportRunning: 'Importing database, please wait...',
+    databaseImportSuccess: 'Database imported. Refresh the conversation list.',
+    confirmDatabaseImport: 'Import will replace the current database and keep an automatic backup first. Continue?',
     passwordTitle: 'Password',
     passwordDesc: 'Set a password to protect the chat viewer and panel.',
     enterPassword: 'Enter password',
@@ -764,6 +796,7 @@ const T = {
     discoveredAt: (t) => 'Last refresh: ' + t,
     discovered: (n) => 'Found ' + n + ' conversations',
     confirmMultiExport: (n) => 'Export ' + n + ' conversations as a zip. Continue?',
+    confirmFullScrape: 'Full scraping first deletes local messages for the target conversations, then writes back what Douyin currently provides. Douyin usually keeps about one year of history, so older local messages may be lost. Export a full database backup first. Continue?',
     mediaTitle: 'Media Download',
     mediaDesc: 'Download images and emoji during scraping so they remain viewable after Douyin CDN URLs expire.',
     autoDownloadNew: 'Auto-download images to local for newly scraped messages',
@@ -1131,6 +1164,9 @@ async function loadDiscoverLog() {
 async function startScrape() {
   const incremental = document.getElementById('modeIncr').checked;
   const conversations = [...selectedMap.scraper];
+  if (!incremental && !confirm(t('confirmFullScrape'))) {
+    return;
+  }
   document.getElementById('scrapeBtn').disabled = true;
   await fetch('/panel/api/scrape', {
     method: 'POST',
@@ -1193,7 +1229,7 @@ async function updateSchedule() {
 async function startExport() {
   const format = document.getElementById('exportFormat').value;
   const conversations = [...selectedMap.export];
-  if (conversations.length > 1 && !confirm(t('confirmMultiExport', conversations.length))) {
+  if (format !== 'database' && conversations.length > 1 && !confirm(t('confirmMultiExport', conversations.length))) {
     return;
   }
   document.getElementById('exportBtn').disabled = true;
@@ -1204,6 +1240,49 @@ async function startExport() {
     body: JSON.stringify({ format, conversations }),
   });
   loadStatus();
+}
+
+function updateExportMode() {
+  const databaseMode = document.getElementById('exportFormat').value === 'database';
+  const options = document.getElementById('exportConversationOptions');
+  const hint = document.getElementById('databaseExportHint');
+  if (options) options.style.display = databaseMode ? 'none' : '';
+  if (hint) hint.style.display = databaseMode ? '' : 'none';
+}
+
+async function importDatabase() {
+  const input = document.getElementById('databaseImportFile');
+  const file = input.files && input.files[0];
+  const msg = document.getElementById('databaseImportMsg');
+  if (!file) {
+    setDynText(msg, t('databaseImportEmpty'));
+    return;
+  }
+  if (!confirm(t('confirmDatabaseImport'))) return;
+
+  const btn = document.getElementById('databaseImportBtn');
+  btn.disabled = true;
+  setDynText(msg, t('databaseImportRunning'));
+  try {
+    const r = await fetch('/panel/api/database/import', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/octet-stream'},
+      body: file,
+    });
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) {
+      setDynText(msg, d.error || t('error'));
+      return;
+    }
+    setDynText(msg, d.message || t('databaseImportSuccess'));
+    input.value = '';
+    await loadStatus();
+    await loadDiscoveredConvs();
+  } catch (e) {
+    setDynText(msg, t('error') + ': ' + (e.message || e));
+  } finally {
+    btn.disabled = false;
+  }
 }
 
 /* ── Media download ── */
@@ -1639,6 +1718,7 @@ window.fetch = function(url, opts) {
 };
 
 applyI18n();
+updateExportMode();
 showPage(localStorage.getItem('panel-page') || 'overview');
 panelAuthCheck();
 </script>

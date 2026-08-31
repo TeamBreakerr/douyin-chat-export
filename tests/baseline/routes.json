@@ -36,6 +36,7 @@
  "POST /panel/api/conversations/refresh/stop",
  "POST /panel/api/conversations/selected",
  "POST /panel/api/custom-filter",
+ "POST /panel/api/database/import",
  "POST /panel/api/export",
  "POST /panel/api/login/cancel",
  "POST /panel/api/login/clear",
