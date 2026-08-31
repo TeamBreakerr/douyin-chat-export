@@ -296,9 +296,19 @@ def test_history_backfill_uses_local_voice_candidates_without_message_fetch(
     insert_conversation(conn, "123456", "语音会话")
     insert_message(
         conn, "voice", "123456", 1, content="[语音]", msg_type=0,
-        raw_data=_voice_raw("8001"),
+        sender_uid="sender",
+        raw_data=_voice_raw("8001", sec_uid=""),
     )
-    insert_message(conn, "text", "123456", 2, content="普通消息", msg_type=1)
+    insert_message(
+        conn,
+        "text",
+        "123456",
+        2,
+        sender_uid="sender",
+        content="普通消息",
+        msg_type=1,
+        raw_data=json.dumps({"sender_sec_uid": "sec-sender"}),
+    )
     conn.commit()
 
     class BackfillPage:
@@ -334,6 +344,12 @@ def test_history_backfill_uses_local_voice_candidates_without_message_fetch(
     assert conn.execute(
         "SELECT text_result FROM voice_transcriptions WHERE msg_id='voice'"
     ).fetchone()[0] == "历史补充完成"
+    stored_raw = json.loads(
+        conn.execute(
+            "SELECT raw_data FROM messages WHERE msg_id='voice'"
+        ).fetchone()[0]
+    )
+    assert stored_raw["sender_sec_uid"] == "sec-sender"
     assert conn.execute(
         "SELECT COUNT(*) FROM voice_transcriptions WHERE msg_id='text'"
     ).fetchone()[0] == 0

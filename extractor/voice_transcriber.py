@@ -7,6 +7,7 @@ the Playwright scraper so it can be tested without a logged-in browser.
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Mapping
 
@@ -198,6 +199,124 @@ def is_voice_message(message: Any) -> bool:
     """Return whether a stored message has a recognizable voice payload."""
     _raw, content = message_content_json(message)
     return _voice_resource(message, content) is not None
+
+
+def _message_sec_uid(message: Any) -> str:
+    """Read a sender's sec_uid from all supported historical locations."""
+    raw, content = message_content_json(message)
+    return (
+        _text(raw.get("sender_sec_uid"))
+        or _text(raw.get("sec_uid"))
+        or _text(_value(message, "sender_sec_uid"))
+        or _text(content.get("sec_uid") if content else None)
+    )
+
+
+def known_sender_sec_uids(
+    conn: Any, sender_uids: set[str] | None = None
+) -> tuple[dict[str, str], set[str]]:
+    """Build a conservative sender_uid -> sec_uid map from local messages.
+
+    ``sender_uid`` is a numeric user ID and cannot be sent to the recognition
+    endpoint in place of ``sec_uid``.  A mapping is considered safe only when
+    one sender_uid has exactly one observed sec_uid.  Conflicting mappings are
+    returned separately so callers can leave those rows skipped rather than
+    guessing.
+    """
+    observed: defaultdict[str, set[str]] = defaultdict(set)
+    params: list[str] = []
+    where = "sender_uid IS NOT NULL AND sender_uid != '' AND raw_data IS NOT NULL"
+    if sender_uids:
+        placeholders = ",".join("?" for _ in sender_uids)
+        where += f" AND sender_uid IN ({placeholders})"
+        params.extend(sorted(sender_uids))
+    rows = conn.execute(
+        f"SELECT sender_uid, raw_data FROM messages WHERE {where}", params
+    ).fetchall()
+    for row in rows:
+        sender_uid = _text(_value(row, "sender_uid"))
+        sec_uid = _message_sec_uid(row)
+        if sender_uid and sec_uid:
+            observed[sender_uid].add(sec_uid)
+
+    unique = {
+        sender_uid: next(iter(sec_uids))
+        for sender_uid, sec_uids in observed.items()
+        if len(sec_uids) == 1
+    }
+    ambiguous = {
+        sender_uid for sender_uid, sec_uids in observed.items()
+        if len(sec_uids) > 1
+    }
+    return unique, ambiguous
+
+
+def backfill_sender_sec_uids(conn: Any, rows: list[Any]) -> tuple[list[Any], dict[str, int]]:
+    """Persist missing voice-row sec_uids using unambiguous local mappings.
+
+    The returned rows are plain dictionaries so the caller can immediately
+    build recognition requests without re-querying the database.  Persisting
+    the field in ``raw_data`` makes subsequent backfill runs idempotent.
+    Rows with no trustworthy mapping remain unchanged and are reported to the
+    caller for its normal ``missing fields: sec_uid`` skip handling.
+    """
+    candidate_sender_uids = {
+        _text(_value(row, "sender_uid"))
+        for row in rows
+        if _text(_value(row, "sender_uid"))
+        and not _message_sec_uid(row)
+    }
+    mapping, ambiguous = known_sender_sec_uids(conn, candidate_sender_uids)
+    stats = {
+        "checked": len(rows),
+        "missing": 0,
+        "mapped_sender_uids": 0,
+        "updated": 0,
+        "unresolved": 0,
+        "ambiguous": 0,
+    }
+    mapped_senders: set[str] = set()
+    enriched: list[Any] = []
+
+    for row in rows:
+        data = dict(row) if not isinstance(row, dict) else dict(row)
+        current_sec_uid = _message_sec_uid(data)
+        if current_sec_uid:
+            enriched.append(data)
+            continue
+
+        stats["missing"] += 1
+        sender_uid = _text(_value(data, "sender_uid"))
+        sec_uid = mapping.get(sender_uid)
+        if not sec_uid:
+            if sender_uid in ambiguous:
+                stats["ambiguous"] += 1
+            stats["unresolved"] += 1
+            enriched.append(data)
+            continue
+
+        mapped_senders.add(sender_uid)
+        data["sender_sec_uid"] = sec_uid
+        raw, _content = message_content_json(data)
+        if raw:
+            raw["sender_sec_uid"] = sec_uid
+            encoded = json.dumps(raw, ensure_ascii=False)
+            data["raw_data"] = encoded
+            conn.execute(
+                "UPDATE messages SET raw_data = ? WHERE msg_id = ?",
+                (encoded, _text(_value(data, "msg_id"))),
+            )
+            stats["updated"] += 1
+        else:
+            # Keep the in-memory value usable even if a malformed legacy row
+            # cannot safely be rewritten without discarding its raw payload.
+            stats["unresolved"] += 1
+        enriched.append(data)
+
+    stats["mapped_sender_uids"] = len(mapped_senders)
+    if stats["updated"]:
+        conn.commit()
+    return enriched, stats
 
 
 def _remote_message_id(message: Any, raw: Mapping[str, Any]) -> str:

@@ -28,6 +28,7 @@ from extractor.models import (
 )
 from extractor.voice_transcriber import (
     VoiceTranscriber,
+    backfill_sender_sec_uids,
     is_voice_message,
     pending_voice_rows,
 )
@@ -2009,6 +2010,23 @@ class WebChatScraper:
         ]
         rows = pending_voice_rows(self._db_conn, filter_parts or None)
         candidates = [row for row in rows if is_voice_message(row)]
+        candidates, sec_stats = backfill_sender_sec_uids(
+            self._db_conn, candidates
+        )
+        if sec_stats["missing"]:
+            print(
+                "[voice] 检测到语音消息缺少 sec_uid: "
+                f"{sec_stats['missing']} 条；"
+                f"从本地已有消息获取到 {sec_stats['mapped_sender_uids']} 个"
+                " sender_uid→sec_uid 映射"
+            )
+        print(
+            "[voice] sec_uid 回填: "
+            f"检查消息={sec_stats['checked']} 缺失={sec_stats['missing']} "
+            f"匹配发送者={sec_stats['mapped_sender_uids']} "
+            f"已写入={sec_stats['updated']} "
+            f"无法补齐={sec_stats['unresolved']}"
+        )
         grouped = {}
         for row in candidates:
             grouped.setdefault(str(row["conv_id"]), []).append(row)

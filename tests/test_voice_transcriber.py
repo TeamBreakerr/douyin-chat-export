@@ -14,8 +14,10 @@ from extractor.voice_transcriber import (
     VoiceRecognitionRequest,
     VoiceRequestError,
     VoiceTranscriber,
+    backfill_sender_sec_uids,
     build_voice_request,
     is_voice_message,
+    known_sender_sec_uids,
     pending_voice_rows,
     parse_recognition_response,
 )
@@ -620,4 +622,136 @@ def test_pending_voice_rows_filter_local_db_candidates(temp_db):
     rows = pending_voice_rows(conn)
 
     assert [row["msg_id"] for row in rows] == ["voice-pending"]
+    conn.close()
+
+
+def test_backfill_sender_sec_uids_uses_unique_local_sender_mapping(temp_db):
+    conn = connect(foreign_keys=True)
+    insert_conversation(conn, "c1", "会话")
+    insert_message(
+        conn,
+        "known",
+        "c1",
+        1,
+        sender_uid="sender",
+        content="普通消息",
+        msg_type=1,
+        raw_data=json.dumps({"sender_sec_uid": "sec-sender"}),
+    )
+    insert_message(
+        conn,
+        "voice",
+        "c1",
+        2,
+        sender_uid="sender",
+        content="[语音]",
+        msg_type=0,
+        raw_data=_voice_raw("7003", sec_uid=""),
+    )
+    conn.commit()
+
+    rows = conn.execute("SELECT * FROM messages WHERE msg_id = 'voice'").fetchall()
+    unique, ambiguous = known_sender_sec_uids(conn)
+    assert unique == {"sender": "sec-sender"}
+    assert ambiguous == set()
+
+    enriched, stats = backfill_sender_sec_uids(conn, rows)
+
+    assert stats == {
+        "checked": 1,
+        "missing": 1,
+        "mapped_sender_uids": 1,
+        "updated": 1,
+        "unresolved": 0,
+        "ambiguous": 0,
+    }
+    assert enriched[0]["sender_sec_uid"] == "sec-sender"
+    stored = json.loads(
+        conn.execute(
+            "SELECT raw_data FROM messages WHERE msg_id = 'voice'"
+        ).fetchone()[0]
+    )
+    assert stored["sender_sec_uid"] == "sec-sender"
+    conn.close()
+
+
+def test_backfill_sender_sec_uids_leaves_ambiguous_mapping_unresolved(temp_db):
+    conn = connect(foreign_keys=True)
+    insert_conversation(conn, "c1", "会话")
+    for seq, sec_uid in ((1, "sec-a"), (2, "sec-b")):
+        insert_message(
+            conn,
+            f"known-{seq}",
+            "c1",
+            seq,
+            sender_uid="sender",
+            content="普通消息",
+            msg_type=1,
+            raw_data=json.dumps({"sender_sec_uid": sec_uid}),
+        )
+    insert_message(
+        conn,
+        "voice",
+        "c1",
+        3,
+        sender_uid="sender",
+        content="[语音]",
+        msg_type=0,
+        raw_data=_voice_raw("7004", sec_uid=""),
+    )
+    conn.commit()
+
+    rows = conn.execute("SELECT * FROM messages WHERE msg_id = 'voice'").fetchall()
+    enriched, stats = backfill_sender_sec_uids(conn, rows)
+
+    assert stats["missing"] == 1
+    assert stats["mapped_sender_uids"] == 0
+    assert stats["updated"] == 0
+    assert stats["unresolved"] == 1
+    assert stats["ambiguous"] == 1
+    assert "sender_sec_uid" not in enriched[0]
+    conn.close()
+
+
+def test_backfill_sender_sec_uids_handles_multiple_group_senders(temp_db):
+    conn = connect(foreign_keys=True)
+    insert_conversation(conn, "group", "群聊")
+    for seq, sender_uid, sec_uid in (
+        (1, "sender-a", "sec-a"),
+        (2, "sender-b", "sec-b"),
+    ):
+        insert_message(
+            conn,
+            f"known-{seq}",
+            "group",
+            seq,
+            sender_uid=sender_uid,
+            content="普通消息",
+            msg_type=1,
+            raw_data=json.dumps({"sender_sec_uid": sec_uid}),
+        )
+    for seq, sender_uid, remote_id in (
+        (3, "sender-a", "7101"),
+        (4, "sender-b", "7102"),
+    ):
+        insert_message(
+            conn,
+            f"voice-{seq}",
+            "group",
+            seq,
+            sender_uid=sender_uid,
+            content="[语音]",
+            msg_type=0,
+            raw_data=_voice_raw(remote_id, sec_uid=""),
+        )
+    conn.commit()
+
+    rows = conn.execute(
+        "SELECT * FROM messages WHERE msg_id LIKE 'voice-%' ORDER BY seq"
+    ).fetchall()
+    enriched, stats = backfill_sender_sec_uids(conn, rows)
+
+    assert stats["mapped_sender_uids"] == 2
+    assert stats["updated"] == 2
+    assert [row["sender_sec_uid"] for row in enriched] == ["sec-a", "sec-b"]
     conn.close()
