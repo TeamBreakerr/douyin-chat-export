@@ -1169,88 +1169,87 @@ watch(() => props.jumpToSeq, async (seq) => {
 
 /* 语音消息：沿用普通消息气泡，并在播放器与转写之间分隔 */
 .msg-voice-bubble {
-  min-width: 248px;
-  max-width: 380px;
-  padding: 11px 13px 10px;
+  min-width: 176px;
+  max-width: 360px;
+  padding: 8px 10px 9px;
 }
 .msg-voice-player {
   display: flex;
   align-items: center;
-  gap: 12px;
-  min-height: 40px;
+  gap: 8px;
+  min-height: 32px;
 }
 .msg-voice-play {
-  width: 40px;
-  height: 40px;
+  width: 32px;
+  height: 32px;
   padding: 0;
   border: 0;
   border-radius: 50%;
   display: grid;
   place-items: center;
-  background: color-mix(in srgb, var(--accent) 14%, var(--bg-message-other));
-  color: var(--accent);
-  box-shadow: 0 2px 7px color-mix(in srgb, var(--text-primary) 12%, transparent);
+  background: var(--text-primary);
+  color: var(--bg-primary);
+  box-shadow: none;
   cursor: pointer;
   flex: 0 0 auto;
-  transition: transform 0.15s, background 0.15s, color 0.15s;
+  transition: transform 0.15s, opacity 0.15s;
 }
-.msg-voice-play svg { width: 20px; height: 20px; fill: currentColor; }
+.msg-voice-play svg { width: 16px; height: 16px; fill: currentColor; }
 .msg-voice-play:hover:not(:disabled),
 .msg-voice-play.playing {
-  transform: scale(1.04);
-  background: var(--accent);
-  color: #fff;
+  transform: scale(1.03);
+  opacity: 0.78;
 }
 .msg-item.msg-self .msg-voice-play {
-  background: color-mix(in srgb, #fff 92%, transparent);
+  background: color-mix(in srgb, var(--text-on-self) 94%, transparent);
   color: var(--accent);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
 }
 .msg-item.msg-self .msg-voice-play:hover:not(:disabled),
 .msg-item.msg-self .msg-voice-play.playing {
-  background: #fff;
-  color: var(--accent);
+  opacity: 0.8;
 }
 .msg-voice-play:disabled {
   opacity: 0.45;
   cursor: default;
   box-shadow: none;
 }
+.msg-voice-play:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 .msg-voice-wave {
   display: flex;
   align-items: center;
-  gap: 4px;
-  height: 32px;
-  flex: 1;
-  min-width: 74px;
-  padding: 0 1px;
+  gap: 3px;
+  height: 22px;
+  flex: 0 0 auto;
 }
 .msg-voice-wave i {
   display: block;
-  width: 3px;
-  height: 14px;
+  width: 2.5px;
+  height: 10px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 42%, var(--text-primary));
-  opacity: 0.78;
+  background: var(--text-primary);
+  opacity: 0.88;
   transform-origin: center;
   transition: opacity 0.2s, background 0.2s;
 }
-.msg-voice-wave i:nth-child(1) { height: 12px; }
-.msg-voice-wave i:nth-child(2) { height: 20px; }
-.msg-voice-wave i:nth-child(3) { height: 28px; }
-.msg-voice-wave i:nth-child(4) { height: 17px; }
-.msg-voice-wave i:nth-child(5) { height: 24px; }
-.msg-voice-wave i:nth-child(6) { height: 31px; }
-.msg-voice-wave i:nth-child(7) { height: 20px; }
-.msg-voice-wave i:nth-child(8) { height: 27px; }
+.msg-voice-wave i:nth-child(1) { height: 8px; }
+.msg-voice-wave i:nth-child(2) { height: 14px; }
+.msg-voice-wave i:nth-child(3) { height: 11px; }
+.msg-voice-wave i:nth-child(4) { height: 16px; }
+.msg-voice-wave i:nth-child(5) { height: 10px; }
+.msg-voice-wave i:nth-child(6) { height: 18px; }
+.msg-voice-wave i:nth-child(7) { height: 12px; }
+.msg-voice-wave i:nth-child(8) { height: 21px; }
 .msg-voice-wave i:nth-child(9) { height: 14px; }
-.msg-voice-wave i:nth-child(10) { height: 24px; }
-.msg-voice-wave i:nth-child(11) { height: 18px; }
-.msg-voice-wave i:nth-child(12) { height: 28px; }
-.msg-voice-wave i:nth-child(13) { height: 13px; }
+.msg-voice-wave i:nth-child(10) { height: 9px; }
+.msg-voice-wave i:nth-child(11) { height: 17px; }
+.msg-voice-wave i:nth-child(12) { height: 12px; }
+.msg-voice-wave i:nth-child(13) { height: 19px; }
 .msg-item.msg-self .msg-voice-wave i {
-  background: color-mix(in srgb, var(--text-on-self) 82%, transparent);
-  opacity: 0.86;
+  background: color-mix(in srgb, var(--text-on-self) 90%, transparent);
+  opacity: 0.9;
 }
 @keyframes voice-wave-pulse {
   0%, 100% { transform: scaleY(0.58); opacity: 0.58; }
@@ -1264,13 +1263,13 @@ watch(() => props.jumpToSeq, async (seq) => {
 @media (prefers-reduced-motion: reduce) {
   .msg-voice-player.playing .msg-voice-wave i { animation: none; }
 }
-.msg-voice audio {
+.msg-voice-bubble audio {
   display: none;
 }
 .msg-voice-dur {
-  min-width: 25px;
-  font-size: 13px;
-  font-weight: 600;
+  margin-left: 4px;
+  font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted);
   white-space: nowrap;
   text-align: right;
@@ -1280,7 +1279,7 @@ watch(() => props.jumpToSeq, async (seq) => {
 }
 .msg-voice-divider {
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
-  margin: 11px 0 9px;
+  margin: 8px 0 7px;
 }
 .msg-item.msg-self .msg-voice-divider {
   border-top-color: color-mix(in srgb, var(--text-on-self) 25%, transparent);
