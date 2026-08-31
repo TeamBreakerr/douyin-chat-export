@@ -17,6 +17,7 @@ CONFIG_PATH = os.path.join(DATA_DIR, "panel_config.json")
 
 # Logs & discovery artifacts
 SCRAPE_LOG = os.path.join(DATA_DIR, "scrape.log")
+VOICE_TRANSCRIPTION_LOG = os.path.join(DATA_DIR, "voice_transcription.log")
 DISCOVER_LOG = os.path.join(DATA_DIR, "discover.log")
 CONVERSATIONS_LIST = os.path.join(DATA_DIR, "conversations_list.json")
 

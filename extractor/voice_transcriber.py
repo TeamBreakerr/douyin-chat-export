@@ -251,14 +251,20 @@ def known_sender_sec_uids(
     return unique, ambiguous
 
 
-def backfill_sender_sec_uids(conn: Any, rows: list[Any]) -> tuple[list[Any], dict[str, int]]:
+def backfill_sender_sec_uids(
+    conn: Any,
+    rows: list[Any],
+    extra_mapping: Mapping[str, str] | None = None,
+) -> tuple[list[Any], dict[str, int]]:
     """Persist missing voice-row sec_uids using unambiguous local mappings.
 
     The returned rows are plain dictionaries so the caller can immediately
     build recognition requests without re-querying the database.  Persisting
     the field in ``raw_data`` makes subsequent backfill runs idempotent.
-    Rows with no trustworthy mapping remain unchanged and are reported to the
-    caller for its normal ``missing fields: sec_uid`` skip handling.
+    ``extra_mapping`` can supply sender identities discovered by a targeted
+    remote lookup. Rows with no trustworthy mapping remain unchanged and are
+    reported to the caller for its normal ``missing fields: sec_uid`` skip
+    handling.
     """
     candidate_sender_uids = {
         _text(_value(row, "sender_uid"))
@@ -267,6 +273,16 @@ def backfill_sender_sec_uids(conn: Any, rows: list[Any]) -> tuple[list[Any], dic
         and not _message_sec_uid(row)
     }
     mapping, ambiguous = known_sender_sec_uids(conn, candidate_sender_uids)
+    if extra_mapping:
+        for sender_uid, sec_uid in extra_mapping.items():
+            sender_uid = _text(sender_uid)
+            sec_uid = _text(sec_uid)
+            if sender_uid and sec_uid and sender_uid in candidate_sender_uids:
+                # Remote protobuf data is authoritative for this lookup, but
+                # never allow an explicitly ambiguous local sender to be
+                # guessed from a partial mapping.
+                if sender_uid not in ambiguous:
+                    mapping[sender_uid] = sec_uid
     stats = {
         "checked": len(rows),
         "missing": 0,

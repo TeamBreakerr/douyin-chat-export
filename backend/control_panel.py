@@ -118,6 +118,7 @@ _video_backfill_state = {
 }
 
 LOG_PATH = paths.SCRAPE_LOG
+VOICE_LOG_PATH = paths.VOICE_TRANSCRIPTION_LOG
 DISCOVER_LOG_PATH = paths.DISCOVER_LOG
 CONV_LIST_PATH = paths.CONVERSATIONS_LIST
 
@@ -555,18 +556,21 @@ async def start_voice_backfill(req: VoiceBackfillRequest | None = None):
     _scrape_state["message"] = "补充历史语音转写"
     if conversations:
         _scrape_state["message"] += f" ({len(conversations)} 个会话)"
-    asyncio.create_task(_run_scrape(cmd))
+    asyncio.create_task(
+        _run_scrape(cmd, log_path=VOICE_LOG_PATH, job_kind="voice_backfill")
+    )
     return {"status": "started", "message": _scrape_state["message"]}
 
 
-async def _run_scrape(cmd):
+async def _run_scrape(cmd, *, log_path=None, job_kind="scrape"):
     # Reset here (not in start_scrape) so BOTH the manual and cron paths clear a
     # prior manual-stop flag; otherwise a scheduled scrape after a manual Stop
     # would be mislabeled '已停止' and its failure notification suppressed.
     _scrape_state["stopped"] = False
     try:
-        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-        with open(LOG_PATH, "w", encoding="utf-8", newline="") as log_file:
+        log_path = log_path or LOG_PATH
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "w", encoding="utf-8", newline="") as log_file:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=log_file,
@@ -584,20 +588,25 @@ async def _run_scrape(cmd):
             _scrape_state["message"] = "已停止"
         elif proc.returncode == 0:
             _scrape_state["status"] = "completed"
-            _scrape_state["message"] = "采集完成"
+            _scrape_state["message"] = (
+                "语音转写补充完成" if job_kind == "voice_backfill" else "采集完成"
+            )
         else:
             _scrape_state["status"] = "failed"
-            _scrape_state["message"] = f"采集失败 (exit code {proc.returncode})"
+            label = "语音转写补充" if job_kind == "voice_backfill" else "采集"
+            _scrape_state["message"] = f"{label}失败 (exit code {proc.returncode})"
     except Exception as e:
         _scrape_state["status"] = "failed"
-        _scrape_state["message"] = f"采集错误: {e}"
+        label = "语音转写补充" if job_kind == "voice_backfill" else "采集"
+        _scrape_state["message"] = f"{label}错误: {e}"
     finally:
         _scrape_state["finished_at"] = time.time()
         _scrape_state["process"] = None
         if _scrape_state["status"] == "failed" and not _scrape_state.get("stopped"):
+            label = "语音转写补充" if job_kind == "voice_backfill" else "采集"
             asyncio.create_task(_notify_on_failure(
-                "抖音聊天导出 · 采集失败",
-                _build_failure_desp(_scrape_state["message"], LOG_PATH),
+                f"抖音聊天导出 · {label}失败",
+                _build_failure_desp(_scrape_state["message"], log_path),
             ))
 
 
@@ -607,6 +616,18 @@ async def scrape_log(lines: int = 50):
         return {"log": ""}
     try:
         all_lines = _read_utf8_or_gbk(LOG_PATH).splitlines(keepends=True)
+        tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        return {"log": "".join(tail)}
+    except Exception:
+        return {"log": ""}
+
+
+@control_router.get("/api/voice-transcriptions/log")
+async def voice_transcription_log(lines: int = 80):
+    if not os.path.exists(VOICE_LOG_PATH):
+        return {"log": ""}
+    try:
+        all_lines = _read_utf8_or_gbk(VOICE_LOG_PATH).splitlines(keepends=True)
         tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
         return {"log": "".join(tail)}
     except Exception:

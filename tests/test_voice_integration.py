@@ -354,3 +354,107 @@ def test_history_backfill_uses_local_voice_candidates_without_message_fetch(
         "SELECT COUNT(*) FROM voice_transcriptions WHERE msg_id='text'"
     ).fetchone()[0] == 0
     conn.close()
+
+
+def test_sec_uid_lookup_stops_after_target_senders_are_found(temp_db):
+    class LookupPage:
+        def __init__(self):
+            self.lookup_calls = 0
+
+        async def evaluate(self, script, arg=None):
+            if "window.__imApi.fetchBatch" in script:
+                self.lookup_calls += 1
+                return {
+                    "msgs": [
+                        {"conv_id": "123456", "sender_uid": "sender-a", "sender_sec_uid": "sec-a"},
+                        {"conv_id": "123456", "sender_uid": "sender-b", "sender_sec_uid": "sec-b"},
+                    ],
+                    "hasMore": 1,
+                    "nextTs": "900",
+                }
+            return None
+
+    page = LookupPage()
+    scraper = WebChatScraper()
+    scraper.page = page
+    mapping, stats = asyncio.run(
+        scraper._lookup_sender_sec_uids(
+            "123456", "123456", {"sender-a", "sender-b"}
+        )
+    )
+
+    assert mapping == {"sender-a": "sec-a", "sender-b": "sec-b"}
+    assert stats == {"target_senders": 2, "pages": 1, "matched": 2}
+    assert page.lookup_calls == 1
+
+
+def test_history_backfill_remote_lookup_only_fetches_sender_identity(
+    temp_db, monkeypatch
+):
+    conn = connect(foreign_keys=True)
+    insert_conversation(conn, "123456", "语音会话")
+    insert_message(
+        conn,
+        "voice",
+        "123456",
+        1,
+        sender_uid="sender",
+        content="[语音]",
+        msg_type=0,
+        raw_data=_voice_raw("8002", sec_uid=""),
+    )
+    conn.commit()
+
+    class BackfillPage:
+        def __init__(self):
+            self.lookup_calls = 0
+            self.recognition_payloads = []
+
+        async def evaluate(self, script, arg=None):
+            if "window.__imApi.fetchBatch" in script:
+                self.lookup_calls += 1
+                return {
+                    "msgs": [{
+                        "conv_id": "123456",
+                        "sender_uid": "sender",
+                        "sender_sec_uid": "sec-remote",
+                    }],
+                    "hasMore": 1,
+                    "nextTs": "900",
+                }
+            if "mainOptions" in script:
+                return "self-uid"
+            if isinstance(arg, list) and arg and "/audio/recognition/" in arg[0]:
+                self.recognition_payloads.extend(arg[1])
+                return {
+                    "status": 200,
+                    "body": {"recognition_results": [{
+                        "message_id": arg[1][0]["message_id"],
+                        "text_result": "远程补充完成",
+                    }]},
+                }
+            return None
+
+    async def no_navigation():
+        return None
+
+    async def no_sleep(_seconds):
+        return None
+
+    page = BackfillPage()
+    scraper = WebChatScraper()
+    scraper._db_conn = conn
+    scraper.page = page
+    scraper.navigate_to_chat = no_navigation
+    monkeypatch.setattr("extractor.web_scraper.asyncio.sleep", no_sleep)
+
+    stats = asyncio.run(scraper.backfill_voice_transcriptions())
+
+    assert page.lookup_calls == 1
+    assert page.recognition_payloads[0]["sec_uid"] == "sec-remote"
+    assert stats["succeeded"] == 1
+    stored_raw = json.loads(
+        conn.execute("SELECT raw_data FROM messages WHERE msg_id='voice'").fetchone()[0]
+    )
+    assert stored_raw["sender_sec_uid"] == "sec-remote"
+    conn.close()

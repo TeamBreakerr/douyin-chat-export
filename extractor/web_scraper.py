@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Extract Douyin chat messages via web version using Playwright + DOM scraping."""
 import asyncio
+from collections import defaultdict
 import json
 import hashlib
 import os
@@ -1654,6 +1655,74 @@ class WebChatScraper:
             };
         }""")
 
+    async def _lookup_sender_sec_uids(
+        self,
+        conv_id: str,
+        conv_short_id: str,
+        sender_uids: set[str],
+        *,
+        max_pages: int = 20,
+    ) -> tuple[dict[str, str], dict[str, int]]:
+        """Find missing sender identities without importing remote messages.
+
+        The normal message API returns ``sender_uid`` and protobuf field 14
+        (``sender_sec_uid``) together.  For voice backfill we only need that
+        identity pair, so fetch one page at a time and stop as soon as every
+        requested sender has been observed.  The returned messages are never
+        passed to ``_store_messages``.
+        """
+        targets = {str(uid) for uid in sender_uids if str(uid)}
+        stats = {"target_senders": len(targets), "pages": 0, "matched": 0}
+        if not targets or not conv_short_id:
+            return {}, stats
+
+        await self._inject_api_tools()
+        observed: defaultdict[str, set[str]] = defaultdict(set)
+        next_ts = "9999999999999999"
+        has_more = True
+
+        while targets and has_more and stats["pages"] < max_pages:
+            try:
+                result = await self.page.evaluate(
+                    """async (args) => {
+                        const [convId, cursor, ts] = args;
+                        return await window.__imApi.fetchBatch(convId, cursor, ts, 1);
+                    }""",
+                    [conv_id, conv_short_id, next_ts],
+                )
+            except Exception as exc:
+                print(f"  [!] sec_uid 定向补取失败: {exc}")
+                break
+
+            stats["pages"] += 1
+            if not result or not result.get("msgs"):
+                break
+            has_more = result.get("hasMore", 0) == 1
+            next_ts = result.get("nextTs", next_ts)
+
+            for message in result["msgs"]:
+                message_conv_id = str(message.get("conv_id") or "")
+                if message_conv_id and message_conv_id != conv_id:
+                    continue
+                sender_uid = str(message.get("sender_uid") or "")
+                sec_uid = str(message.get("sender_sec_uid") or "")
+                if sender_uid in targets and sec_uid:
+                    observed[sender_uid].add(sec_uid)
+
+            # A sender is complete only when this lookup has one consistent
+            # identity. Conflicts stay unresolved instead of guessing.
+            targets = {
+                uid for uid in targets if len(observed.get(uid, set())) != 1
+            }
+
+        mapping = {
+            uid: next(iter(sec_uids))
+            for uid, sec_uids in observed.items()
+            if len(sec_uids) == 1
+        }
+        stats["matched"] = len(mapping)
+        return mapping, stats
+
     async def _api_fetch_all_messages(self, conv_id, cursor, incremental=False):
         """用 API 直接获取全部历史消息。
 
@@ -2042,14 +2111,69 @@ class WebChatScraper:
         await self.navigate_to_chat()
         await asyncio.sleep(2)
 
-        total = {"voices": 0, "cached": 0, "requested": 0,
-                 "succeeded": 0, "failed": 0, "skipped": 0}
+        # A local mapping is normally enough.  If it is not, ask the message
+        # API for only the sender identities still needed by this backfill.
+        # The lookup stops as soon as all target sender_uids are found and does
+        # not write any fetched messages into the database.
+        unresolved_by_conv = {}
         for conv_id, conv_rows in grouped.items():
+            sender_uids = {
+                str(row["sender_uid"])
+                for row in conv_rows
+                if row["sender_uid"]
+                and not str(row.get("sender_sec_uid") or "").strip()
+            }
+            if sender_uids:
+                unresolved_by_conv[conv_id] = sender_uids
+
+        remote_short_ids = {}
+        remote_mapping = {}
+        for conv_id, sender_uids in unresolved_by_conv.items():
+            conv_rows = grouped[conv_id]
             conv_name = str(conv_rows[0]["conversation_name"] or conv_id)
             if conv_id.isdigit():
                 conv_short_id = conv_id
             else:
                 conv_short_id = await self._acquire_short_id(conv_id, conv_name)
+            remote_short_ids[conv_id] = conv_short_id or ""
+            mapping, lookup_stats = await self._lookup_sender_sec_uids(
+                conv_id, conv_short_id or "", sender_uids
+            )
+            remote_mapping.update(mapping)
+            print(
+                "  [voice] sec_uid 定向补取: "
+                f"会话={conv_name} 目标发送者={lookup_stats['target_senders']} "
+                f"请求页数={lookup_stats['pages']} 命中={lookup_stats['matched']} "
+                f"未命中={lookup_stats['target_senders'] - lookup_stats['matched']}"
+            )
+
+        if remote_mapping:
+            candidates, remote_stats = backfill_sender_sec_uids(
+                self._db_conn, candidates, extra_mapping=remote_mapping
+            )
+            print(
+                "[voice] 远程 sec_uid 回填: "
+                f"匹配发送者={remote_stats['mapped_sender_uids']} "
+                f"已写入={remote_stats['updated']} "
+                f"无法补齐={remote_stats['unresolved']}"
+            )
+
+        # The rows may have been enriched by the remote lookup; regroup them
+        # before transcription so every request sees the updated sec_uid.
+        grouped = {}
+        for row in candidates:
+            grouped.setdefault(str(row["conv_id"]), []).append(row)
+
+        total = {"voices": 0, "cached": 0, "requested": 0,
+                 "succeeded": 0, "failed": 0, "skipped": 0}
+        for conv_id, conv_rows in grouped.items():
+            conv_name = str(conv_rows[0]["conversation_name"] or conv_id)
+            conv_short_id = remote_short_ids.get(conv_id)
+            if conv_short_id is None:
+                if conv_id.isdigit():
+                    conv_short_id = conv_id
+                else:
+                    conv_short_id = await self._acquire_short_id(conv_id, conv_name)
             stats = await VoiceTranscriber(
                 self.page, self._db_conn
             ).transcribe_rows(conv_rows, conv_short_id or "")

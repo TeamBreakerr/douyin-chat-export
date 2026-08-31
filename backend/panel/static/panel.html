@@ -423,6 +423,7 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
       <span class="status status-idle" id="voiceBackfillStatus" data-i18n="idle">闲置</span>
     </div>
     <div class="meta" id="voiceBackfillMsg" style="margin-top:6px"></div>
+    <div class="log-box" id="voiceBackfillLog"></div>
   </div>
   <div class="section">
     <h2 data-i18n="mediaTitle">媒体下载</h2>
@@ -895,8 +896,9 @@ async function loadStatus() {
 
     // Scrape status
     const ss = d.scrape;
+    const voiceJob = ss.kind === 'voice_backfill' || voiceBackfillActive;
     const se = document.getElementById('scrapeStatus');
-    setStatusEl(se, ss.status);
+    setStatusEl(se, voiceJob ? 'idle' : ss.status);
     document.getElementById('scrapeBtn').disabled = ss.status === 'running';
     document.getElementById('voiceBackfillBtn').disabled = ss.status === 'running';
     document.getElementById('stopBtn').style.display = ss.status === 'running' ? '' : 'none';
@@ -904,15 +906,15 @@ async function loadStatus() {
     if (ss.started_at) timeStr += t('startedAt') + new Date(ss.started_at * 1000).toLocaleString();
     if (ss.finished_at) timeStr += '  ' + t('finishedAt') + new Date(ss.finished_at * 1000).toLocaleString();
     if (ss.message) timeStr += '  ' + ss.message;
-    document.getElementById('scrapeTime').textContent = timeStr;
+    document.getElementById('scrapeTime').textContent = voiceJob ? '' : timeStr;
 
-    const voiceJob = voiceBackfillActive || ss.kind === 'voice_backfill';
     setStatusEl(document.getElementById('voiceBackfillStatus'), voiceJob ? ss.status : 'idle');
     setDynText(document.getElementById('voiceBackfillMsg'), voiceJob ? ss.message : '');
     if (voiceBackfillActive && ss.status !== 'running') voiceBackfillActive = false;
 
     if (ss.status === 'running' || ss.status === 'completed' || ss.status === 'failed') {
-      loadLog();
+      if (voiceJob) loadVoiceBackfillLog();
+      else loadLog();
     }
 
     // Export status
@@ -1141,6 +1143,23 @@ async function loadLog() {
     box.textContent = d.log || t('noOutput');
     box.classList.add('show');
     if (stick) box.scrollTop = box.scrollHeight;
+  } catch {}
+}
+
+async function loadVoiceBackfillLog() {
+  try {
+    const r = await fetch('/panel/api/voice-transcriptions/log?lines=120');
+    const d = await r.json();
+    const box = document.getElementById('voiceBackfillLog');
+    if (!box) return;
+    if (d.log) {
+      const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+      box.textContent = d.log;
+      box.classList.add('show');
+      if (stick) box.scrollTop = box.scrollHeight;
+    } else {
+      box.classList.remove('show');
+    }
   } catch {}
 }
 
