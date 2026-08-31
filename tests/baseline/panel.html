@@ -154,6 +154,22 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
 .btn-sm { padding: 5px 11px; font-size: 12px; }
 
+/* ── File picker ── */
+.file-picker-input {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+.file-picker {
+  user-select: none;
+}
+.file-picker-input:focus-visible + .file-picker {
+  border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg);
+}
+.file-picker-name {
+  min-width: 0; max-width: min(360px, 100%); overflow: hidden;
+  color: var(--text2); text-overflow: ellipsis; white-space: nowrap;
+}
+
 /* ── Status badge ── */
 .status {
   display: inline-flex; align-items: center; gap: 5px;
@@ -488,7 +504,9 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     <h2 data-i18n="databaseImportTitle">数据库覆盖导入</h2>
     <div class="meta" style="margin-bottom:10px" data-i18n="databaseImportDesc">选择之前导出的 SQLite 文件。导入会覆盖当前数据库，导入前会自动保留一份旧数据库备份。</div>
     <div class="row">
-      <input type="file" id="databaseImportFile" accept=".db,.sqlite,.sqlite3,application/octet-stream">
+      <input type="file" id="databaseImportFile" class="file-picker-input" accept=".db,.sqlite,.sqlite3,application/octet-stream" onchange="updateDatabaseFileName(this)">
+      <label class="btn btn-outline file-picker" for="databaseImportFile" data-i18n="databaseChooseFile">选择文件</label>
+      <span class="file-picker-name" id="databaseImportFileName">未选择任何文件</span>
       <button class="btn btn-danger" id="databaseImportBtn" onclick="importDatabase()" data-i18n="databaseImportBtn">导入并覆盖数据库</button>
     </div>
     <div class="meta" id="databaseImportMsg" style="margin-top:6px"></div>
@@ -631,6 +649,8 @@ const T = {
     databaseExportHint: '整库导出会生成一个可在本面板覆盖导入的 SQLite 文件。',
     databaseImportTitle: '数据库覆盖导入',
     databaseImportDesc: '选择之前导出的 SQLite 文件。导入会覆盖当前数据库，导入前会自动保留一份旧数据库备份。',
+    databaseChooseFile: '选择文件',
+    databaseNoFile: '未选择任何文件',
     databaseImportBtn: '导入并覆盖数据库',
     databaseImportEmpty: '请选择 SQLite 数据库文件',
     databaseImportRunning: '正在导入数据库，请稍候...',
@@ -738,6 +758,8 @@ const T = {
     databaseExportHint: 'The full export is a SQLite file that can be imported here to replace the database.',
     databaseImportTitle: 'Replace database by import',
     databaseImportDesc: 'Choose a SQLite file exported earlier. Import replaces the current database and keeps an automatic backup of the old one.',
+    databaseChooseFile: 'Choose file',
+    databaseNoFile: 'No file selected',
     databaseImportBtn: 'Import and replace database',
     databaseImportEmpty: 'Choose a SQLite database file first',
     databaseImportRunning: 'Importing database, please wait...',
@@ -832,6 +854,7 @@ function setLang(l) {
   lang = l;
   localStorage.setItem('panel-lang', l);
   applyI18n();
+  updateDatabaseFileName(document.getElementById('databaseImportFile'));
   // Re-render dynamic texts (counts, meta, lists, etc.)
   renderDiscoverMeta();
   renderConvCounts();
@@ -1200,6 +1223,14 @@ async function startExport() {
   loadStatus();
 }
 
+function updateDatabaseFileName(input) {
+  const nameEl = document.getElementById('databaseImportFileName');
+  if (!nameEl) return;
+  const file = input && input.files && input.files[0];
+  nameEl.textContent = file ? file.name : t('databaseNoFile');
+  nameEl.title = file ? file.name : '';
+}
+
 function updateExportMode() {
   const databaseMode = document.getElementById('exportFormat').value === 'database';
   const options = document.getElementById('exportConversationOptions');
@@ -1234,6 +1265,7 @@ async function importDatabase() {
     }
     setDynText(msg, d.message || t('databaseImportSuccess'));
     input.value = '';
+    updateDatabaseFileName(input);
     await loadStatus();
     await loadDiscoveredConvs();
   } catch (e) {
@@ -1676,6 +1708,7 @@ window.fetch = function(url, opts) {
 };
 
 applyI18n();
+updateDatabaseFileName(document.getElementById('databaseImportFile'));
 updateExportMode();
 showPage(localStorage.getItem('panel-page') || 'overview');
 panelAuthCheck();
