@@ -8,6 +8,7 @@ import re
 import time
 import urllib.parse
 
+from common import paths
 from extractor.models import get_db
 
 # DB msg_type → ChatLab message type
@@ -30,9 +31,14 @@ _WINDOWS_RESERVED_NAMES = {
     *(f"COM{i}" for i in range(1, 10)),
     *(f"LPT{i}" for i in range(1, 10)),
 }
+_MAX_FILENAME_BYTES = 255
 
 
-def _safe_filename_component(value: str | None, fallback: str = "conversation") -> str:
+def _safe_filename_component(
+    value: str | None,
+    fallback: str = "conversation",
+    max_bytes: int = _MAX_FILENAME_BYTES,
+) -> str:
     """Convert a conversation nickname into a portable filename component."""
     component = str(value or "").strip()
     component = _INVALID_FILENAME_CHARS_RE.sub("_", component)
@@ -40,14 +46,17 @@ def _safe_filename_component(value: str | None, fallback: str = "conversation") 
     component = component.strip(" ._") or fallback
     if component.upper() in _WINDOWS_RESERVED_NAMES:
         component = f"_{component}"
-    # Leave room for the timestamp, suffix and extension on common filesystems.
-    return component[:80].rstrip(" ._") or fallback
+    encoded = component.encode("utf-8")
+    if len(encoded) > max_bytes:
+        component = encoded[:max_bytes].decode("utf-8", errors="ignore")
+    return component.rstrip(" ._") or fallback
 
 
 def build_export_filename(
     username: str | None,
     output_format: str = "jsonl",
     timestamp: int | float | None = None,
+    collision_index: int | None = None,
 ) -> str:
     """Build a recognizable, filesystem-safe ChatLab export filename.
 
@@ -58,7 +67,13 @@ def build_export_filename(
     export_time = time.localtime(time.time() if timestamp is None else timestamp)
     stamp = time.strftime("%Y%m%d%H%M%S", export_time)
     extension = ".json" if output_format == "json" else ".jsonl"
-    return f"{_safe_filename_component(username)}_{stamp}_export{extension}"
+    collision_suffix = f"_{collision_index}" if collision_index else ""
+    suffix = f"{collision_suffix}_{stamp}_export{extension}"
+    component = _safe_filename_component(
+        username,
+        max_bytes=_MAX_FILENAME_BYTES - len(suffix.encode("utf-8")),
+    )
+    return f"{component}{suffix}"
 
 
 _STICKER_HEX_RE = re.compile(r"-ts-([0-9a-fA-F]{4,})(?:\.[a-zA-Z0-9]{1,5})?$")
@@ -396,11 +411,13 @@ class ChatLabExporter:
         self,
         conv_name: str = None,
         output_format: str = "jsonl",
-        output_dir: str = "data",
+        output_dir: str | os.PathLike[str] | None = None,
     ):
         self.conv_name = conv_name
         self.output_format = output_format  # "json" or "jsonl"
-        self.output_dir = output_dir
+        self.output_dir = (
+            paths.DATA_DIR if output_dir is None else os.fspath(output_dir)
+        )
 
     def export(self, output_path: str | None = None) -> str | None:
         conn = get_db()

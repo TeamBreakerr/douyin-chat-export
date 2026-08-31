@@ -907,8 +907,7 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
         from extractor.exporter import ChatLabExporter, build_export_filename
         import zipfile
 
-        ext = ".json" if fmt == "json" else ".jsonl"
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+        data_dir = paths.DATA_DIR
 
         # Decide targets
         if conversations:
@@ -943,9 +942,17 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
                     pass
 
             produced = []
+            used_filenames = set()
             exported_at = int(time.time())
             for name in targets:
                 filename = build_export_filename(name, fmt, exported_at)
+                collision_index = 2
+                while filename in used_filenames:
+                    filename = build_export_filename(
+                        name, fmt, exported_at, collision_index=collision_index
+                    )
+                    collision_index += 1
+                used_filenames.add(filename)
                 path = os.path.join(tmp_dir, filename)
                 try:
                     ChatLabExporter(conv_name=name, output_format=fmt).export(path)
@@ -976,9 +983,7 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
 async def download_export():
     if not _export_state["file_path"]:
         return JSONResponse({"error": "No export file"}, status_code=404)
-    path = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "data", _export_state["file_path"]
-    )
+    path = os.path.join(paths.DATA_DIR, _export_state["file_path"])
     if not os.path.exists(path):
         return JSONResponse({"error": "File not found"}, status_code=404)
     return FileResponse(path, filename=_export_state["file_path"])

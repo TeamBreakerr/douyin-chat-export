@@ -201,6 +201,14 @@ def test_build_export_filename_is_safe_and_keeps_chatlab_extension():
     assert re.fullmatch(r"_CON_\d{14}_export\.json", json_name)
 
 
+def test_exporter_default_output_dir_uses_common_data_path(monkeypatch, tmp_path):
+    from common import paths
+
+    monkeypatch.setattr(paths, "DATA_DIR", str(tmp_path))
+
+    assert ChatLabExporter().output_dir == str(tmp_path)
+
+
 def test_export_without_output_path_uses_conversation_name_and_timestamp(temp_db, tmp_path):
     import extractor.models as models
 
@@ -221,3 +229,58 @@ def test_export_without_output_path_uses_conversation_name_and_timestamp(temp_db
     assert output.startswith(str(tmp_path))
     assert re.fullmatch(r"测试会话_\d{14}_export\.jsonl", os.path.basename(output))
     assert os.path.exists(output)
+
+
+def test_export_without_output_path_supports_long_unicode_name(temp_db, tmp_path):
+    import extractor.models as models
+
+    conversation_name = "界" * 80
+    conn = models.get_db()
+    insert_conversation(conn, "c1", conversation_name, participant_uids='["owner"]')
+    conn.execute("INSERT INTO users (uid, nickname) VALUES ('owner','我')")
+    insert_message(conn, "m1", "c1", 1, sender_uid="owner", content="hi", msg_type=1)
+    conn.commit()
+    conn.close()
+
+    output = ChatLabExporter(
+        conv_name=conversation_name,
+        output_format="jsonl",
+        output_dir=str(tmp_path),
+    ).export()
+
+    assert output is not None
+    assert os.path.exists(output)
+    assert len(os.path.basename(output).encode("utf-8")) <= 255
+
+
+def test_panel_batch_export_keeps_sanitized_filename_collisions(
+    temp_db, tmp_path, monkeypatch
+):
+    import zipfile
+
+    from backend import control_panel
+    from common import paths
+    import extractor.models as models
+
+    monkeypatch.setattr(paths, "DATA_DIR", str(tmp_path))
+    conn = models.get_db()
+    insert_conversation(conn, "c1", "a/b", participant_uids='["owner"]')
+    insert_conversation(conn, "c2", "a:b", participant_uids='["owner"]')
+    conn.execute("INSERT INTO users (uid, nickname) VALUES ('owner','我')")
+    insert_message(conn, "m1", "c1", 1, sender_uid="owner", content="one")
+    insert_message(conn, "m2", "c2", 1, sender_uid="owner", content="two")
+    conn.commit()
+    conn.close()
+
+    control_panel._export_state.update({
+        "status": "idle",
+        "file_path": None,
+        "message": "",
+    })
+    control_panel._do_export("jsonl", "", ["a/b", "a:b"])
+
+    assert control_panel._export_state["status"] == "completed"
+    with zipfile.ZipFile(tmp_path / "export.zip") as archive:
+        names = archive.namelist()
+    assert len(names) == 2
+    assert len(set(names)) == 2
