@@ -1333,6 +1333,28 @@ class WebChatScraper:
         conn.execute("DROP TABLE IF EXISTS temp.voice_transcription_backup")
         conn.commit()
 
+    def _reuse_backed_up_voice_transcriptions(self, conv_id):
+        """Restore successful cache entries for messages found by a full refetch."""
+        conn = self._db_conn
+        backup_exists = conn.execute(
+            """SELECT 1 FROM sqlite_temp_master
+               WHERE type = 'table' AND name = 'voice_transcription_backup'"""
+        ).fetchone()
+        if not backup_exists:
+            return 0
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO voice_transcriptions
+               (msg_id, message_id, text_result, status, error, updated_at)
+               SELECT b.msg_id, b.message_id, b.text_result, b.status,
+                      b.error, b.updated_at
+               FROM temp.voice_transcription_backup b
+               JOIN messages m ON m.msg_id = b.msg_id
+               WHERE m.conv_id = ? AND b.status = 'success'""",
+            (conv_id,),
+        )
+        conn.commit()
+        return cur.rowcount
+
 
     async def _clear_sdk_cache(self):
         """清除 IM SDK 的本地缓存（localStorage/sessionStorage/IndexedDB），保留 cookies。
@@ -1865,7 +1887,7 @@ class WebChatScraper:
                     "ref_msg": ref_msg_json,
                 }
                 # Keep the original protobuf type in raw_data when present.
-                # Older rows without it fall back to message_type=7.
+                # Recognition still uses its separate, fixed message_type=7 contract.
                 if m.get("type_code") is not None:
                     converted_message["type_code"] = m["type_code"]
                 converted.append(converted_message)
@@ -1910,6 +1932,7 @@ class WebChatScraper:
         # 5. 原生语音识别使用同一浏览器上下文的 cookies；放在消息落库之后，
         # 既能覆盖本次抓到的语音，也能顺便补识别此前已经保存的历史语音。
         try:
+            self._reuse_backed_up_voice_transcriptions(conv_id)
             voice_stats = await self._transcribe_voice_messages(conv_id, api_cursor)
             if voice_stats.get("voices"):
                 print(

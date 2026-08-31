@@ -37,10 +37,6 @@ class VoiceRecognitionRequest:
     uuid: str
     skey: str
     conv_short_id: str
-    # The documented request value is 7.  Newer web clients include the
-    # protobuf message type (for example 17) in the fetched row; preserve it
-    # when available while retaining 7 for older rows and fixtures.
-    message_type: int = VOICE_MESSAGE_TYPE
 
     def as_payload(self) -> dict[str, Any]:
         return {
@@ -48,7 +44,7 @@ class VoiceRecognitionRequest:
             "sec_uid": self.sec_uid,
             "uuid": self.uuid,
             "message_id": self.message_id,
-            "message_type": self.message_type,
+            "message_type": VOICE_MESSAGE_TYPE,
             "skey": self.skey,
             "conv_short_id": self.conv_short_id,
         }
@@ -100,34 +96,6 @@ def _text(value: Any) -> str:
     if value is None or isinstance(value, (dict, list)):
         return ""
     return str(value).strip()
-
-
-def _positive_int(value: Any) -> int | None:
-    try:
-        if isinstance(value, bool) or value in (None, ""):
-            return None
-        number = int(value)
-    except (TypeError, ValueError):
-        return None
-    return number if number > 0 else None
-
-
-def _protocol_message_type(
-    raw: Mapping[str, Any], content: Mapping[str, Any] | None
-) -> int:
-    """Use a server-provided IM type when one was captured.
-
-    The endpoint has historically accepted ``7`` (the value documented by
-    the project), while the current web client sends the original protobuf
-    type code for some voice rows.  The database keeps that code in
-    ``raw_data`` so either generation can be replayed correctly.
-    """
-    for source in (raw, content or {}):
-        for key in ("type_code", "message_type"):
-            value = _positive_int(source.get(key))
-            if value is not None:
-                return value
-    return VOICE_MESSAGE_TYPE
 
 
 def _resource_value(resource: Mapping[str, Any], *keys: str) -> str:
@@ -286,8 +254,6 @@ def build_voice_request(
     msg_id = _text(_value(message, "msg_id"))
     self_uuid = _text(self_uuid)
     conv_short_id = _text(conv_short_id)
-    message_type = _protocol_message_type(raw, content)
-
     missing = [
         name
         for name, value in (
@@ -311,7 +277,6 @@ def build_voice_request(
         uuid=self_uuid,
         skey=skey,
         conv_short_id=conv_short_id,
-        message_type=message_type,
     )
 
 
@@ -324,7 +289,7 @@ SELF_UUID_EVAL_SCRIPT = """() => {
         if (!props || typeof props !== 'object') return '';
         const main = props.mainOptions || props.value?.mainOptions;
         if (main && typeof main === 'object') {
-            const id = text(main.deviceId || main.uuid || main.user_unique_id);
+            const id = text(main.deviceId || main.uuid);
             if (id) return id;
         }
         const options = props.options;
@@ -333,10 +298,8 @@ SELF_UUID_EVAL_SCRIPT = """() => {
             if (id) return id;
         }
         // Some builds pass the context value itself as the props object.
-        if (props.consumer_name && props.commonQueryData) {
-            const id = text(props.deviceId || props.uuid || props.user_unique_id);
-            if (id) return id;
-        }
+        const directId = text(props.deviceId || props.uuid);
+        if (directId) return directId;
         return '';
     };
 
@@ -382,13 +345,9 @@ SELF_UUID_EVAL_SCRIPT = """() => {
             if (id) return id;
         }
     }
-
-    // Compatibility fallback for older web builds which expose only the
-    // account object.  The React mainOptions value above is always preferred.
     const me = window.userInfoStore && window.userInfoStore.curLoginUserInfo;
-    if (!me) return '';
-    return text(me.user_unique_id || me.userUniqueId || me.uuid || me.uid ||
-                 me.user_id || me.userId || me.sec_uid || me.secUid || '');
+    if (me) return text(me.uuid || '');
+    return '';
 }"""
 
 
@@ -666,15 +625,8 @@ class VoiceTranscriber:
         if isinstance(value, dict):
             value = (
                 value.get("uuid")
-                or value.get("uid")
-                or value.get("user_unique_id")
-                or value.get("userUniqueId")
                 or value.get("device_id")
                 or value.get("deviceId")
-                or value.get("user_id")
-                or value.get("userId")
-                or value.get("sec_uid")
-                or value.get("secUid")
             )
         return _text(value)
 
@@ -682,25 +634,6 @@ class VoiceTranscriber:
     def _fallback_message_id(row: Any) -> str:
         value = _text(_value(row, "msg_id"))
         return value[4:] if value.startswith("srv_") else value
-
-    def _fallback_self_uuid(self, conv_id: str) -> str:
-        """Use the first participant as a last-resort owner UID.
-
-        The scraper records ``curLoginUserInfo`` first in participant_uids.
-        The page value remains preferred because it is the authoritative
-        session identity, but this fallback lets an already collected DB be
-        backfilled when the store is temporarily not populated.
-        """
-        row = self.conn.execute(
-            "SELECT participant_uids FROM conversations WHERE conv_id = ?",
-            (conv_id,),
-        ).fetchone()
-        if not row:
-            return ""
-        values = _as_json(row[0])
-        if isinstance(values, list) and values:
-            return _text(values[0])
-        return ""
 
     def _save(self, request: VoiceRecognitionRequest, result: dict[str, str]) -> None:
         upsert_voice_transcription(
@@ -749,9 +682,6 @@ class VoiceTranscriber:
                 missing_uuid_error = "missing self uuid"
         else:
             missing_uuid_error = "missing self uuid"
-        if not self_uuid:
-            self_uuid = self._fallback_self_uuid(conv_id)
-
         requests: list[VoiceRecognitionRequest] = []
         for row in candidates:
             try:

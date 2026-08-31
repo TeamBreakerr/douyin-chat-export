@@ -62,7 +62,7 @@ class FakePage:
         self.calls = []
 
     async def evaluate(self, script, arg=None):
-        if "curLoginUserInfo" in script:
+        if "mainOptions" in script:
             return self.self_uuid
         if not arg or not isinstance(arg, list) or not arg or arg[0] != AUDIO_RECOGNITION_API:
             raise AssertionError(f"unexpected page evaluation: {script[:80]}")
@@ -145,7 +145,7 @@ def test_build_request_keeps_missing_skey_as_an_empty_payload_field():
     assert request.as_payload()["skey"] == ""
 
 
-def test_build_request_uses_captured_protocol_type_and_defaults_to_seven():
+def test_build_request_always_uses_recognition_message_type_seven():
     message = {
         "msg_id": "m1",
         "msg_type": 0,
@@ -158,7 +158,7 @@ def test_build_request_uses_captured_protocol_type_and_defaults_to_seven():
     }
     assert build_voice_request(
         message, conv_short_id="short", self_uuid="self-uid"
-    ).as_payload()["message_type"] == 17
+    ).as_payload()["message_type"] == VOICE_MESSAGE_TYPE
     assert _request().as_payload()["message_type"] == VOICE_MESSAGE_TYPE
 
 
@@ -502,7 +502,7 @@ def test_transcriber_marks_missing_self_uuid_without_call(temp_db):
     assert "uuid" in row[1]
 
 
-def test_transcriber_falls_back_to_recorded_owner_uid(temp_db):
+def test_transcriber_does_not_use_participant_uid_as_uuid(temp_db):
     conn = connect(foreign_keys=True)
     insert_conversation(conn, "c1", "会话", participant_uids='["owner-uid", "sender"]')
     insert_message(
@@ -516,16 +516,12 @@ def test_transcriber_falls_back_to_recorded_owner_uid(temp_db):
     )
     conn.commit()
 
-    page = FakePage(
-        lambda payload: {"status": 200, "body": {"data": [
-            {"message_id": payload[0]["message_id"], "text_result": "回退身份成功"}
-        ]}},
-        self_uuid="",
-    )
+    page = FakePage(lambda _payload: None, self_uuid="")
     stats = asyncio.run(VoiceTranscriber(page, conn).transcribe_conversation("c1", "short"))
 
-    assert stats["succeeded"] == 1
-    assert page.calls[0][1][0]["uuid"] == "owner-uid"
+    assert stats["skipped"] == 1
+    assert stats["requested"] == 0
+    assert page.calls == []
 
 
 def test_transcriber_backfills_legacy_text_typed_voice_row(temp_db):

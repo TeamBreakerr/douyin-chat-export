@@ -110,6 +110,94 @@ def test_full_scrape_rollback_restores_transcription(temp_db):
     conn.close()
 
 
+def test_full_scrape_reuses_successful_transcription_after_refetch(temp_db):
+    """Replacing a message must not discard a successful recognition cache."""
+
+    class ReplayedVoicePage:
+        def __init__(self):
+            self.recognition_calls = 0
+
+        async def evaluate(self, script, arg=None):
+            if "window.__imApi.fetchBatch" in script:
+                return {
+                    "msgs": [{
+                        "server_id": "5001",
+                        "created_at_us": "100",
+                        "type_code": 17,
+                        "sender_uid": "sender",
+                        "sender_sec_uid": "sec-sender",
+                        "conv_id": "c1",
+                        "content_json": json.dumps({
+                            "aweType": 0,
+                            "resource_url": {
+                                "uri": "voice-uri",
+                                "url_list": ["https://cdn.example/voice.mpeg"],
+                            },
+                            "duration": 2300,
+                        }),
+                    }],
+                    "hasMore": 0,
+                    "nextTs": "0",
+                }
+            if isinstance(arg, list) and arg and "/audio/recognition/" in arg[0]:
+                self.recognition_calls += 1
+                return {
+                    "status": 200,
+                    "body": {"recognition_results": [{
+                        "message_id": "5001",
+                        "text_result": "不应重新识别",
+                    }]},
+                }
+            if "mainOptions" in script:
+                return "owner"
+            return None
+
+    conn = connect(foreign_keys=True)
+    insert_conversation(conn, "c1", "语音会话")
+    insert_message(
+        conn,
+        "srv_5001",
+        "c1",
+        1,
+        sender_uid="sender",
+        content="[语音 2秒]",
+        msg_type=0,
+        raw_data=_voice_raw("5001"),
+    )
+    upsert_voice_transcription(
+        conn, "srv_5001", "5001", "已缓存的转写", "success", updated_at=7
+    )
+    conn.commit()
+
+    scraper = WebChatScraper(incremental=False)
+    scraper._db_conn = conn
+    scraper.page = ReplayedVoicePage()
+
+    async def no_download(_messages):
+        return None
+
+    async def no_senders(_sec_by_uid):
+        return None
+
+    scraper._download_voice_files = no_download
+    scraper._download_image_files = no_download
+    scraper._resolve_sender_identities = no_senders
+
+    backed_up = scraper._backup_conv_messages("c1")
+    conn.execute("DELETE FROM messages WHERE conv_id = ?", ("c1",))
+    conn.commit()
+
+    asyncio.run(scraper._api_fetch_all_messages("c1", "short-1"))
+    scraper._restore_conv_messages_if_empty("c1", backed_up)
+
+    row = conn.execute(
+        "SELECT status, text_result FROM voice_transcriptions WHERE msg_id='srv_5001'"
+    ).fetchone()
+    assert tuple(row) == ("success", "已缓存的转写")
+    assert scraper.page.recognition_calls == 0
+    conn.close()
+
+
 def test_api_scrape_runs_transcription_hook_even_when_no_new_page_rows(temp_db):
     """An incremental run can backfill old voice rows after the fetch is empty."""
 
