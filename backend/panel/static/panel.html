@@ -160,14 +160,31 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
   overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
 }
 .file-picker {
-  user-select: none;
+  display: inline-flex; align-items: center; gap: 10px; min-width: 230px;
+  max-width: 100%; padding: 7px 12px; border: 1px dashed var(--border);
+  border-radius: 10px; background: var(--bg3); color: var(--text);
+  cursor: pointer; user-select: none; transition: border-color 0.15s, background 0.15s;
+}
+.file-picker:hover {
+  border-color: var(--accent); background: var(--accent-bg);
+}
+.file-picker-icon {
+  width: 30px; height: 30px; display: grid; place-items: center;
+  flex: 0 0 auto; border-radius: 8px; color: var(--accent);
+  background: var(--accent-bg);
+}
+.file-picker-icon svg { width: 17px; height: 17px; }
+.file-picker-copy {
+  min-width: 0; display: flex; flex-direction: column; gap: 2px;
+  line-height: 1.25;
+}
+.file-picker-title { font-size: 12px; font-weight: 600; }
+.file-picker-name {
+  min-width: 0; max-width: 190px; overflow: hidden; color: var(--text3);
+  font-size: 11px; text-overflow: ellipsis; white-space: nowrap;
 }
 .file-picker-input:focus-visible + .file-picker {
   border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg);
-}
-.file-picker-name {
-  min-width: 0; max-width: min(360px, 100%); overflow: hidden;
-  color: var(--text2); text-overflow: ellipsis; white-space: nowrap;
 }
 
 /* ── Status badge ── */
@@ -503,10 +520,19 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
   <div class="section">
     <h2 data-i18n="databaseImportTitle">数据库覆盖导入</h2>
     <div class="meta" style="margin-bottom:10px" data-i18n="databaseImportDesc">选择之前导出的 SQLite 文件。导入会覆盖当前数据库，导入前会自动保留一份旧数据库备份。</div>
-    <div class="row">
+    <div class="row database-import-row">
       <input type="file" id="databaseImportFile" class="file-picker-input" accept=".db,.sqlite,.sqlite3,application/octet-stream" onchange="updateDatabaseFileName(this)">
-      <label class="btn btn-outline file-picker" for="databaseImportFile" data-i18n="databaseChooseFile">选择文件</label>
-      <span class="file-picker-name" id="databaseImportFileName">未选择任何文件</span>
+      <label class="file-picker" for="databaseImportFile">
+        <span class="file-picker-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 3v12m0-12-4 4m4-4 4 4M5 14v5h14v-5" />
+          </svg>
+        </span>
+        <span class="file-picker-copy">
+          <span class="file-picker-title" data-i18n="databaseChooseFile">选择 SQLite 文件</span>
+          <span class="file-picker-name" id="databaseImportFileName">未选择任何文件</span>
+        </span>
+      </label>
       <button class="btn btn-danger" id="databaseImportBtn" onclick="importDatabase()" data-i18n="databaseImportBtn">导入并覆盖数据库</button>
     </div>
     <div class="meta" id="databaseImportMsg" style="margin-top:6px"></div>
@@ -649,7 +675,7 @@ const T = {
     databaseExportHint: '整库导出会生成一个可在本面板覆盖导入的 SQLite 文件。',
     databaseImportTitle: '数据库覆盖导入',
     databaseImportDesc: '选择之前导出的 SQLite 文件。导入会覆盖当前数据库，导入前会自动保留一份旧数据库备份。',
-    databaseChooseFile: '选择文件',
+    databaseChooseFile: '选择 SQLite 文件',
     databaseNoFile: '未选择任何文件',
     databaseImportBtn: '导入并覆盖数据库',
     databaseImportEmpty: '请选择 SQLite 数据库文件',
@@ -758,7 +784,7 @@ const T = {
     databaseExportHint: 'The full export is a SQLite file that can be imported here to replace the database.',
     databaseImportTitle: 'Replace database by import',
     databaseImportDesc: 'Choose a SQLite file exported earlier. Import replaces the current database and keeps an automatic backup of the old one.',
-    databaseChooseFile: 'Choose file',
+    databaseChooseFile: 'Choose SQLite file',
     databaseNoFile: 'No file selected',
     databaseImportBtn: 'Import and replace database',
     databaseImportEmpty: 'Choose a SQLite database file first',
