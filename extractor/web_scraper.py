@@ -1753,7 +1753,7 @@ class WebChatScraper:
         total_fetched = 0
         batch_num = 0
         zero_saved_streak = 0  # 连续 saved=0 的批次计数
-        voice_message_ids = []  # 只转写本次 API 批次看到的语音
+        voice_message_ids = []  # 只转写本次实际新增的语音
         pages_per_batch = 20  # 每批获取 20 页 = 1000 条
         has_more = True
         start_time = time.time()
@@ -1972,12 +1972,17 @@ class WebChatScraper:
             # 下载图片/表情（按配置）
             await self._download_image_files(converted)
 
-            newly_inserted = self._store_messages(converted, conv_id, batch_seq_start=0)
+            newly_inserted, inserted_message_ids = self._store_messages(
+                converted, conv_id, batch_seq_start=0
+            )
             total_saved += newly_inserted
-            voice_message_ids.extend(
+            voice_ids = {
                 self._make_msg_id(conv_id, message)
                 for message in converted
                 if is_voice_message(message)
+            }
+            voice_message_ids.extend(
+                msg_id for msg_id in inserted_message_ids if msg_id in voice_ids
             )
 
             elapsed = time.time() - start_time
@@ -2010,7 +2015,7 @@ class WebChatScraper:
                 break
 
         # 5. 原生语音识别使用同一浏览器上下文的 cookies；放在消息落库之后，
-        # 只处理本次 API 批次看到的语音。历史语音由面板里的独立回填任务处理，
+        # 只处理本次实际新增的语音。历史语音由面板里的独立回填任务处理，
         # 避免每次增量采集都扫描整个会话。
         if voice_message_ids:
             try:
@@ -2210,9 +2215,10 @@ class WebChatScraper:
         return f"web_{msg_hash}"
 
     def _store_messages(self, messages, conv_id, batch_seq_start=0):
-        """Store a batch of messages to the database immediately. Returns count of newly inserted rows."""
+        """Store a batch and return its inserted row count and message IDs."""
         conn = self._db_conn
         newly_inserted = 0
+        inserted_message_ids = []
 
         for idx, msg in enumerate(messages):
             content = msg.get("content", "")
@@ -2271,6 +2277,7 @@ class WebChatScraper:
             )
             if cursor.rowcount > 0:
                 newly_inserted += 1
+                inserted_message_ids.append(msg_id)
             elif ref_msg:
                 # 已存在的消息：更新 ref_msg（如果新数据包含引用信息）
                 conn.execute(
@@ -2293,7 +2300,7 @@ class WebChatScraper:
                 pass
             self._commit_counter = 0
 
-        return newly_inserted
+        return newly_inserted, inserted_message_ids
 
     async def close(self):
         if self._db_conn:

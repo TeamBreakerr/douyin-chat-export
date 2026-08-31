@@ -225,6 +225,72 @@ def test_api_scrape_skips_transcription_when_no_new_page_rows(temp_db):
     conn.close()
 
 
+def test_incremental_scrape_transcribes_only_newly_inserted_voices(temp_db):
+    """Old voices seen while catching up stay with the history backfill task."""
+
+    def api_voice(server_id):
+        return {
+            "server_id": server_id,
+            "created_at_us": server_id,
+            "type_code": 17,
+            "sender_uid": "sender",
+            "sender_sec_uid": "sec-sender",
+            "conv_id": "c1",
+            "content_json": json.dumps({
+                "aweType": 0,
+                "resource_url": {"uri": f"voice-{server_id}"},
+                "duration": 1000,
+            }),
+        }
+
+    class MixedBatchPage:
+        async def evaluate(self, script, arg=None):
+            if "window.__imApi.fetchBatch" in script:
+                return {
+                    "msgs": [api_voice("6102"), api_voice("6101")],
+                    "hasMore": 0,
+                    "nextTs": "0",
+                }
+            return None
+
+    conn = connect(foreign_keys=True)
+    insert_conversation(conn, "c1", "会话")
+    insert_message(
+        conn, "srv_6101", "c1", 1, content="[语音 1秒]", msg_type=0,
+        sender_uid="sender", raw_data=_voice_raw("6101"),
+    )
+    conn.commit()
+
+    scraper = WebChatScraper(incremental=True)
+    scraper._db_conn = conn
+    scraper.page = MixedBatchPage()
+
+    async def no_download(_messages):
+        return None
+
+    async def no_senders(_sec_by_uid):
+        return None
+
+    calls = []
+
+    async def transcribe(conv_id, short_id, *, message_ids=None):
+        calls.append((conv_id, short_id, message_ids))
+        return {"voices": 1, "cached": 0, "requested": 1,
+                "succeeded": 1, "failed": 0, "skipped": 0}
+
+    scraper._download_voice_files = no_download
+    scraper._download_image_files = no_download
+    scraper._resolve_sender_identities = no_senders
+    scraper._transcribe_voice_messages = transcribe
+
+    asyncio.run(
+        scraper._api_fetch_all_messages("c1", "short-1", incremental=True)
+    )
+
+    assert calls == [("c1", "short-1", ["srv_6102"])]
+    conn.close()
+
+
 def test_api_scrape_classifies_awe_type_zero_voice_before_text(temp_db):
     """The web voice payload uses aweType=0 and must remain msg_type=0."""
 

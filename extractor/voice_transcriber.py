@@ -298,6 +298,9 @@ def backfill_sender_sec_uids(
         data = dict(row) if not isinstance(row, dict) else dict(row)
         current_sec_uid = _message_sec_uid(data)
         if current_sec_uid:
+            # Normalize legacy raw-data-only identities for callers deciding
+            # whether a targeted remote lookup is still necessary.
+            data["sender_sec_uid"] = current_sec_uid
             enriched.append(data)
             continue
 
@@ -749,7 +752,8 @@ def pending_voice_rows(conn: Any, conversation_names: list[str] | None = None) -
     where = (
         "m.msg_type IN (0, 1) "
         "AND m.raw_data IS NOT NULL "
-        "AND m.raw_data LIKE '%resource_url%' "
+        "AND (m.raw_data LIKE '%resource_url%' "
+        "OR m.raw_data LIKE '%tkey%') "
         "AND (vt.status IS NULL OR vt.status <> 'success')"
     )
     if conversation_names:

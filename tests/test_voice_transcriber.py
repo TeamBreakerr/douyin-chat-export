@@ -612,7 +612,15 @@ def test_pending_voice_rows_filter_local_db_candidates(temp_db):
     )
     upsert_voice_transcription(conn, "voice-done", "7002", "已完成", "success")
     insert_message(
-        conn, "image", "c1", 3, content="[图片]", msg_type=3,
+        conn, "voice-legacy", "c1", 3, content="[语音]", msg_type=0,
+        raw_data=json.dumps({
+            "server_id": "7003",
+            "sender_sec_uid": "sec-sender",
+            "content_json": json.dumps({"duration": 1000, "tkey": "legacy-key"}),
+        }),
+    )
+    insert_message(
+        conn, "image", "c1", 4, content="[图片]", msg_type=3,
         raw_data=json.dumps({"content_json": json.dumps({
             "resource_url": {"origin_url_list": ["image"]},
         })}),
@@ -621,7 +629,24 @@ def test_pending_voice_rows_filter_local_db_candidates(temp_db):
 
     rows = pending_voice_rows(conn)
 
-    assert [row["msg_id"] for row in rows] == ["voice-pending"]
+    assert [row["msg_id"] for row in rows] == ["voice-pending", "voice-legacy"]
+    conn.close()
+
+
+def test_backfill_sender_sec_uids_exposes_identity_already_in_raw_data(temp_db):
+    conn = connect(foreign_keys=True)
+    insert_conversation(conn, "c1", "会话")
+    insert_message(
+        conn, "voice", "c1", 1, sender_uid="sender", content="[语音]",
+        msg_type=0, raw_data=_voice_raw("7004", sec_uid="sec-existing"),
+    )
+    conn.commit()
+
+    rows = conn.execute("SELECT * FROM messages WHERE msg_id = 'voice'").fetchall()
+    enriched, stats = backfill_sender_sec_uids(conn, rows)
+
+    assert stats["missing"] == 0
+    assert enriched[0]["sender_sec_uid"] == "sec-existing"
     conn.close()
 
 
