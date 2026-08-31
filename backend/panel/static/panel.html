@@ -335,6 +335,33 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
 /* ── Login overlay ── */
 #loginOverlay { position: fixed; inset: 0; z-index: 9999; background: var(--bg); display: flex; align-items: center; justify-content: center; }
 
+/* ── Confirmation modal ── */
+.confirm-modal {
+  position: fixed; inset: 0; z-index: 10000; display: grid; place-items: center;
+  padding: 24px; background: rgba(15, 16, 20, 0.58);
+  backdrop-filter: blur(4px); animation: modalFadeIn 0.16s ease-out;
+}
+.confirm-modal[hidden] { display: none; }
+.confirm-dialog {
+  width: min(470px, 100%); padding: 22px; background: var(--bg2);
+  border: 1px solid var(--border); border-radius: 16px; box-shadow: 0 18px 60px rgba(0,0,0,0.28);
+  animation: modalSlideIn 0.18s ease-out;
+}
+.confirm-head { display: flex; align-items: flex-start; gap: 13px; }
+.confirm-icon {
+  width: 36px; height: 36px; flex: 0 0 auto; display: grid; place-items: center;
+  border-radius: 11px; color: var(--yellow); background: var(--yellow-bg);
+  font-size: 19px; font-weight: 800;
+}
+.confirm-title { padding-top: 2px; color: var(--text); font-size: 15px; font-weight: 700; }
+.confirm-message { margin-top: 8px; color: var(--text2); font-size: 13px; line-height: 1.7; }
+.confirm-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 21px; }
+@keyframes modalFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes modalSlideIn { from { opacity: 0; transform: translateY(5px) scale(0.98); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .confirm-modal, .confirm-dialog { animation: none; }
+}
+
 /* ── Responsive: sidebar collapses to a top bar ── */
 @media (max-width: 820px) {
   .panel-shell { flex-direction: column; }
@@ -369,6 +396,21 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
       style="width:100%;box-sizing:border-box;padding:10px 14px;border:1px solid var(--border);border-radius:8px;background:var(--bg);color:var(--text);font-size:15px;margin-bottom:12px;outline:none;">
     <button onclick="panelLogin()" style="width:100%;padding:10px;border:none;border-radius:8px;background:var(--accent);color:#fff;font-size:15px;cursor:pointer;" data-i18n="loginBtn">登录</button>
     <div id="panelLoginErr" style="margin-top:10px;color:var(--red);font-size:13px;"></div>
+  </div>
+</div>
+<div id="confirmModal" class="confirm-modal" hidden onclick="if(event.target===this)closeConfirmModal(false)">
+  <div class="confirm-dialog" role="dialog" aria-modal="true" aria-labelledby="confirmModalTitle" aria-describedby="confirmModalMessage">
+    <div class="confirm-head">
+      <div class="confirm-icon" aria-hidden="true">!</div>
+      <div>
+        <div class="confirm-title" id="confirmModalTitle" data-i18n="fullScrapeConfirmTitle">确认全量采集</div>
+        <div class="confirm-message" id="confirmModalMessage"></div>
+      </div>
+    </div>
+    <div class="confirm-actions">
+      <button class="btn btn-outline" id="confirmModalCancel" type="button" onclick="closeConfirmModal(false)" data-i18n="cancel">取消</button>
+      <button class="btn btn-danger" id="confirmModalOk" type="button" onclick="closeConfirmModal(true)" data-i18n="fullScrapeConfirmOk">继续采集</button>
+    </div>
   </div>
 </div>
 <div class="panel-shell" id="mainContainer" style="display:none;">
@@ -720,7 +762,9 @@ const T = {
     discoveredAt: (t) => '最近刷新: ' + t,
     discovered: (n) => '发现 ' + n + ' 个会话',
     confirmMultiExport: (n) => '将导出 ' + n + ' 个会话并打包为 zip，是否继续？',
-    confirmFullScrape: '全量采集会先删除目标会话的本地消息，再写入抖音当前能提供的记录。抖音通常只保留约一年，超过一年的本地历史可能丢失。建议先导出整库备份。确定继续？',
+    fullScrapeConfirmTitle: '确认全量采集',
+    fullScrapeConfirmOk: '继续采集',
+    confirmFullScrape: '全量采集会先删除目标会话的本地消息，再写入抖音当前能提供的记录。抖音通常只保留约一年，超过一年的本地历史可能丢失。建议先导出整库备份。',
     mediaTitle: '媒体下载',
     mediaDesc: '将图片/表情包下载到本地，避免抖音 CDN 链接过期后无法显示。',
     autoDownloadNew: '新采集消息自动下载图片到本地',
@@ -829,7 +873,9 @@ const T = {
     discoveredAt: (t) => 'Last refresh: ' + t,
     discovered: (n) => 'Found ' + n + ' conversations',
     confirmMultiExport: (n) => 'Export ' + n + ' conversations as a zip. Continue?',
-    confirmFullScrape: 'Full scraping first deletes local messages for the target conversations, then writes back what Douyin currently provides. Douyin usually keeps about one year of history, so older local messages may be lost. Export a full database backup first. Continue?',
+    fullScrapeConfirmTitle: 'Confirm full scrape',
+    fullScrapeConfirmOk: 'Continue scrape',
+    confirmFullScrape: 'Full scraping first deletes local messages for the target conversations, then writes back what Douyin currently provides. Douyin usually keeps about one year of history, so older local messages may be lost. Export a full database backup first.',
     mediaTitle: 'Media Download',
     mediaDesc: 'Save images and emoji locally to keep them viewable after Douyin CDN URLs expire.',
     autoDownloadNew: 'Auto-download images to local for newly scraped messages',
@@ -880,6 +926,10 @@ function setLang(l) {
   lang = l;
   localStorage.setItem('panel-lang', l);
   applyI18n();
+  if (confirmModalResolver && confirmModalMessageKey) {
+    const message = document.getElementById('confirmModalMessage');
+    if (message) message.textContent = t(confirmModalMessageKey);
+  }
   updateDatabaseFileName(document.getElementById('databaseImportFile'));
   // Re-render dynamic texts (counts, meta, lists, etc.)
   renderDiscoverMeta();
@@ -989,6 +1039,46 @@ function setStatusEl(el, status) {
   setText(el, status);
   el.className = 'status status-' + status;
 }
+
+let confirmModalResolver = null;
+let confirmModalPreviousFocus = null;
+let confirmModalMessageKey = '';
+
+function openConfirmModal(messageKey) {
+  return new Promise(resolve => {
+    const modal = document.getElementById('confirmModal');
+    const message = document.getElementById('confirmModalMessage');
+    if (!modal || !message) {
+      resolve(false);
+      return;
+    }
+    confirmModalResolver = resolve;
+    confirmModalMessageKey = messageKey;
+    confirmModalPreviousFocus = document.activeElement;
+    message.textContent = t(messageKey);
+    modal.removeAttribute('hidden');
+    requestAnimationFrame(() => document.getElementById('confirmModalCancel')?.focus());
+  });
+}
+
+function closeConfirmModal(confirmed) {
+  if (!confirmModalResolver) return;
+  const resolve = confirmModalResolver;
+  const previousFocus = confirmModalPreviousFocus;
+  confirmModalResolver = null;
+  confirmModalPreviousFocus = null;
+  confirmModalMessageKey = '';
+  document.getElementById('confirmModal')?.setAttribute('hidden', '');
+  previousFocus?.focus?.();
+  resolve(!!confirmed);
+}
+
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && confirmModalResolver) {
+    event.preventDefault();
+    closeConfirmModal(false);
+  }
+});
 
 /* ── Conversation discovery / checkbox lists ── */
 
@@ -1191,7 +1281,7 @@ async function loadDiscoverLog() {
 async function startScrape() {
   const incremental = document.getElementById('modeIncr').checked;
   const conversations = [...selectedMap.scraper];
-  if (!incremental && !confirm(t('confirmFullScrape'))) {
+  if (!incremental && !(await openConfirmModal('confirmFullScrape'))) {
     return;
   }
   document.getElementById('scrapeBtn').disabled = true;
