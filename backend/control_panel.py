@@ -54,6 +54,7 @@ def _read_utf8_or_gbk(path: str) -> str:
 # ── Scrape job state ──
 _scrape_state = {
     "status": "idle",  # idle | running | completed | failed
+    "kind": "scrape",  # scrape | voice_backfill
     "started_at": None,
     "finished_at": None,
     "message": "",
@@ -139,6 +140,10 @@ class ScrapeRequest(BaseModel):
     incremental: bool = True
     filter: str = ""
     conversations: list[str] | None = None  # selected nicknames; overrides filter
+
+
+class VoiceBackfillRequest(BaseModel):
+    conversations: list[str] | None = None  # selected nicknames; empty = all DB candidates
 
 
 class ExportRequest(BaseModel):
@@ -463,6 +468,7 @@ async def panel_status():
         "custom_filters": cfg.get("custom_filters", []),
         "scrape": {
             "status": _scrape_state["status"],
+            "kind": _scrape_state.get("kind", "scrape"),
             "started_at": _scrape_state["started_at"],
             "finished_at": _scrape_state["finished_at"],
             "message": _scrape_state["message"],
@@ -504,6 +510,7 @@ async def start_scrape(req: ScrapeRequest):
         cmd.append("--download-images")
 
     _scrape_state["status"] = "running"
+    _scrape_state["kind"] = "scrape"
     _scrape_state["started_at"] = time.time()
     _scrape_state["finished_at"] = None
     _scrape_state["message"] = f"{'增量' if req.incremental else '全量'}采集"
@@ -518,6 +525,28 @@ async def start_scrape(req: ScrapeRequest):
         cfg["scraper_selected"] = list(req.conversations)
         _save_config(cfg)
 
+    asyncio.create_task(_run_scrape(cmd))
+    return {"status": "started", "message": _scrape_state["message"]}
+
+
+@control_router.post("/api/voice-transcriptions/backfill")
+async def start_voice_backfill(req: VoiceBackfillRequest | None = None):
+    """Start a local-DB voice backfill without fetching chat history again."""
+    if _scrape_state["status"] == "running":
+        return JSONResponse({"error": "Scrape already running"}, status_code=409)
+
+    conversations = list((req.conversations if req else None) or [])
+    cmd = [sys.executable, "-u", "extract.py", "--transcribe-voices"]
+    if conversations:
+        cmd.extend(["--filter", ",".join(conversations)])
+
+    _scrape_state["status"] = "running"
+    _scrape_state["kind"] = "voice_backfill"
+    _scrape_state["started_at"] = time.time()
+    _scrape_state["finished_at"] = None
+    _scrape_state["message"] = "补充历史语音转写"
+    if conversations:
+        _scrape_state["message"] += f" ({len(conversations)} 个会话)"
     asyncio.create_task(_run_scrape(cmd))
     return {"status": "started", "message": _scrape_state["message"]}
 
@@ -867,6 +896,7 @@ async def _cron_loop(parsed: list, incremental: bool):
                 if filters:
                     cmd.extend(["--filter", ",".join(filters)])
                 _scrape_state["status"] = "running"
+                _scrape_state["kind"] = "scrape"
                 _scrape_state["started_at"] = time.time()
                 _scrape_state["finished_at"] = None
                 filter_desc = f" (过滤: {','.join(filters[:5])}{'...' if len(filters) > 5 else ''})" if filters else " (全部会话)"

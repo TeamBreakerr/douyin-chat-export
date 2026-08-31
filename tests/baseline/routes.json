@@ -50,5 +50,6 @@
  "POST /panel/api/password",
  "POST /panel/api/schedule",
  "POST /panel/api/scrape",
- "POST /panel/api/scrape/stop"
+ "POST /panel/api/scrape/stop",
+ "POST /panel/api/voice-transcriptions/backfill"
 ]

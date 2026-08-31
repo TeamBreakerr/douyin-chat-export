@@ -16,6 +16,7 @@ from extractor.voice_transcriber import (
     VoiceTranscriber,
     build_voice_request,
     is_voice_message,
+    pending_voice_rows,
     parse_recognition_response,
 )
 from tests.conftest import insert_conversation, insert_message
@@ -434,6 +435,44 @@ def test_transcriber_batches_persists_results_and_reuses_success_cache(temp_db):
     assert len(page.calls) == 2
 
 
+def test_transcriber_can_limit_work_to_incremental_message_ids(temp_db):
+    conn = connect(foreign_keys=True)
+    insert_conversation(conn, "c1", "会话")
+    for i in range(3):
+        insert_message(
+            conn, f"m{i}", "c1", i + 1, content="[语音]", msg_type=0,
+            raw_data=_voice_raw(str(1500 + i)),
+        )
+    conn.commit()
+
+    page = FakePage(lambda payload: {
+        "status": 200,
+        "body": {"data": [{
+            "message_id": payload[0]["message_id"],
+            "text_result": "只处理本批",
+        }]},
+    })
+    stats = asyncio.run(
+        VoiceTranscriber(page, conn).transcribe_conversation(
+            "c1", "short-1", message_ids=["m2"]
+        )
+    )
+
+    assert stats == {
+        "voices": 1,
+        "cached": 0,
+        "requested": 1,
+        "succeeded": 1,
+        "failed": 0,
+        "skipped": 0,
+    }
+    assert conn.execute(
+        "SELECT COUNT(*) FROM voice_transcriptions"
+    ).fetchone()[0] == 1
+    assert page.calls[0][1][0]["message_id"] == "1502"
+    conn.close()
+
+
 def test_transcriber_retries_failed_item_without_repeating_success(temp_db):
     conn = connect(foreign_keys=True)
     insert_conversation(conn, "c1", "会话")
@@ -555,3 +594,30 @@ def test_transcriber_backfills_legacy_text_typed_voice_row(temp_db):
     assert conn.execute(
         "SELECT text_result FROM voice_transcriptions WHERE msg_id='m1'"
     ).fetchone()[0] == "旧记录也能识别"
+
+
+def test_pending_voice_rows_filter_local_db_candidates(temp_db):
+    """Historical backfill starts from DB voice candidates, not every message."""
+    conn = connect(foreign_keys=True)
+    insert_conversation(conn, "c1", "语音会话")
+    insert_message(
+        conn, "voice-pending", "c1", 1, content="[语音]", msg_type=0,
+        raw_data=_voice_raw("7001"),
+    )
+    insert_message(
+        conn, "voice-done", "c1", 2, content="[语音]", msg_type=0,
+        raw_data=_voice_raw("7002"),
+    )
+    upsert_voice_transcription(conn, "voice-done", "7002", "已完成", "success")
+    insert_message(
+        conn, "image", "c1", 3, content="[图片]", msg_type=3,
+        raw_data=json.dumps({"content_json": json.dumps({
+            "resource_url": {"origin_url_list": ["image"]},
+        })}),
+    )
+    conn.commit()
+
+    rows = pending_voice_rows(conn)
+
+    assert [row["msg_id"] for row in rows] == ["voice-pending"]
+    conn.close()

@@ -227,6 +227,7 @@ python3 login.py
 python3 extract.py                          # 全量采集所有会话
 python3 extract.py --filter "会话名称"        # 只采集指定会话
 python3 extract.py --filter "会话名称" --incremental   # 增量（只取新消息）
+python3 extract.py --transcribe-voices      # 只补充本地数据库中的历史语音转写
 ```
 
 ### 3. 导出为 ChatLab 格式
@@ -243,7 +244,7 @@ python3 export.py --filter "会话名称" --output data/export.jsonl
 
 导出内容：文本、表情、图片 URL、语音时长与转写文字、分享链接、引用/回复关系。也可在控制面板 **导出** 分区一键操作。
 
-语音转写在采集阶段自动执行：同一会话中未成功识别的语音会按批次调用抖音 Web IM 接口，结果保存到 `voice_transcriptions` 表。请求固定使用抖音语音识别接口要求的 `message_type=7`。对已经采集过的历史消息，重新执行一次增量采集即可补齐转写；已成功的结果会命中本地缓存，不会重复请求。
+语音转写在采集阶段自动执行：普通增量采集只处理本次 API 批次看到的语音，不会为转写再次扫描整个会话。结果保存到 `voice_transcriptions` 表，请求固定使用抖音语音识别接口要求的 `message_type=7`。对已经采集过的历史消息，可在控制面板 **采集** 分区点击「补充历史语音转写」，或执行 `python3 extract.py --transcribe-voices`；任务只筛选当前数据库中的待处理语音，不重新抓取聊天历史，已成功的结果不会重复请求。
 
 ## 控制面板
 
@@ -256,9 +257,9 @@ python3 export.py --filter "会话名称" --output data/export.jsonl
 | 分区 | 功能 |
 |------|------|
 | **概览** | 会话数 / 消息数 / 用户数 |
-| **采集** | 刷新会话列表、增量/全量切换、勾选会话、实时日志 |
+| **采集** | 刷新会话列表、增量/全量切换、历史语音补充、图片/视频本地下载、实时日志 |
 | **定时** | 标准 cron 表达式 + 预设快捷按钮 |
-| **导出** | 选格式和会话一键导出下载、媒体回填（历史图片/视频） |
+| **导出** | 选格式和会话一键导出下载 |
 | **登录** | 远程扫码、Cookie 导入、检查/清除登录态 |
 | **设置** | 访问密码、Server酱 失败通知；4 套主题、中英文切换 |
 
@@ -291,7 +292,7 @@ python3 export.py --filter "会话名称" --output data/export.jsonl
 - 抖音可能随时更改接口导致工具失效
 - 媒体 CDN URL 有签名有效期（约 1 年），过期后未本地化的图片/表情将无法显示
 - 语音文件自动下载到 `data/media/voice/`，不受 CDN 过期影响
-- 语音转写结果保存在 `voice_transcriptions` 表；识别失败的消息会在后续采集时自动重试
+- 语音转写结果保存在 `voice_transcriptions` 表；本次增量批次中的失败项或历史补充任务中的失败项可再次重试
 - 控制面板可开启「图片本地下载」，将图片和表情包持久化到 `data/media/`
 
 ## License

@@ -26,7 +26,11 @@ from common import paths
 from extractor.models import (
     init_db, get_db, upsert_user, upsert_conversation, update_conversation_stats,
 )
-from extractor.voice_transcriber import VoiceTranscriber
+from extractor.voice_transcriber import (
+    VoiceTranscriber,
+    is_voice_message,
+    pending_voice_rows,
+)
 
 CHAT_URL = "https://www.douyin.com/chat?isPopup=1"
 USER_DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "browser_profile")
@@ -1679,6 +1683,7 @@ class WebChatScraper:
         total_fetched = 0
         batch_num = 0
         zero_saved_streak = 0  # 连续 saved=0 的批次计数
+        voice_message_ids = []  # 只转写本次 API 批次看到的语音
         pages_per_batch = 20  # 每批获取 20 页 = 1000 条
         has_more = True
         start_time = time.time()
@@ -1899,6 +1904,11 @@ class WebChatScraper:
 
             newly_inserted = self._store_messages(converted, conv_id, batch_seq_start=0)
             total_saved += newly_inserted
+            voice_message_ids.extend(
+                self._make_msg_id(conv_id, message)
+                for message in converted
+                if is_voice_message(message)
+            )
 
             elapsed = time.time() - start_time
             speed = total_fetched / elapsed if elapsed > 0 else 0
@@ -1930,23 +1940,27 @@ class WebChatScraper:
                 break
 
         # 5. 原生语音识别使用同一浏览器上下文的 cookies；放在消息落库之后，
-        # 既能覆盖本次抓到的语音，也能顺便补识别此前已经保存的历史语音。
-        try:
-            self._reuse_backed_up_voice_transcriptions(conv_id)
-            voice_stats = await self._transcribe_voice_messages(conv_id, api_cursor)
-            if voice_stats.get("voices"):
-                print(
-                    "  [voice] 识别统计: "
-                    f"总数={voice_stats['voices']} "
-                    f"缓存={voice_stats['cached']} "
-                    f"请求={voice_stats['requested']} "
-                    f"成功={voice_stats['succeeded']} "
-                    f"失败={voice_stats['failed']} "
-                    f"跳过={voice_stats['skipped']}"
+        # 只处理本次 API 批次看到的语音。历史语音由面板里的独立回填任务处理，
+        # 避免每次增量采集都扫描整个会话。
+        if voice_message_ids:
+            try:
+                self._reuse_backed_up_voice_transcriptions(conv_id)
+                voice_stats = await self._transcribe_voice_messages(
+                    conv_id, api_cursor, message_ids=voice_message_ids
                 )
-        except Exception as e:
-            # 转写失败不应回滚已经抓到的聊天记录。
-            print(f"  [!] 原生语音识别失败（消息已保存）: {e}")
+                if voice_stats.get("voices"):
+                    print(
+                        "  [voice] 识别统计: "
+                        f"总数={voice_stats['voices']} "
+                        f"缓存={voice_stats['cached']} "
+                        f"请求={voice_stats['requested']} "
+                        f"成功={voice_stats['succeeded']} "
+                        f"失败={voice_stats['failed']} "
+                        f"跳过={voice_stats['skipped']}"
+                    )
+            except Exception as e:
+                # 转写失败不应回滚已经抓到的聊天记录。
+                print(f"  [!] 原生语音识别失败（消息已保存）: {e}")
 
         # 6. 补全发送者身份（群聊必需）。失败不能影响已抓到的消息。
         try:
@@ -1972,11 +1986,70 @@ class WebChatScraper:
         print(f"  [*] API 获取完成: {total_fetched} 条消息, {total_saved} 条新增, 耗时 {elapsed:.1f}s")
         return total_saved
 
-    async def _transcribe_voice_messages(self, conv_id, conv_short_id):
-        """识别当前会话中尚未成功处理的语音消息。"""
+    async def _transcribe_voice_messages(self, conv_id, conv_short_id, message_ids=None):
+        """识别指定消息中的语音；不传 IDs 时用于显式历史回填。"""
         return await VoiceTranscriber(
             self.page, self._db_conn
-        ).transcribe_conversation(conv_id, conv_short_id)
+        ).transcribe_conversation(
+            conv_id, conv_short_id, message_ids=message_ids
+        )
+
+    async def backfill_voice_transcriptions(self, name_filter=None):
+        """补充当前数据库中尚未成功识别的历史语音。
+
+        This deliberately starts from locally stored voice candidates.  It
+        does not fetch the conversation history again; the browser is used
+        only for authentication, UUID lookup, and short-id discovery when a
+        one-to-one conversation needs it.
+        """
+        filter_parts = [
+            part.strip()
+            for part in (name_filter or "").split(",")
+            if part.strip()
+        ]
+        rows = pending_voice_rows(self._db_conn, filter_parts or None)
+        candidates = [row for row in rows if is_voice_message(row)]
+        grouped = {}
+        for row in candidates:
+            grouped.setdefault(str(row["conv_id"]), []).append(row)
+
+        print(
+            f"[*] 历史语音回填: 数据库筛选到 {len(candidates)} 条待处理语音，"
+            f"涉及 {len(grouped)} 个会话"
+        )
+        if not grouped:
+            return {"voices": 0, "cached": 0, "requested": 0,
+                    "succeeded": 0, "failed": 0, "skipped": 0}
+
+        await self.navigate_to_chat()
+        await asyncio.sleep(2)
+
+        total = {"voices": 0, "cached": 0, "requested": 0,
+                 "succeeded": 0, "failed": 0, "skipped": 0}
+        for conv_id, conv_rows in grouped.items():
+            conv_name = str(conv_rows[0]["conversation_name"] or conv_id)
+            if conv_id.isdigit():
+                conv_short_id = conv_id
+            else:
+                conv_short_id = await self._acquire_short_id(conv_id, conv_name)
+            stats = await VoiceTranscriber(
+                self.page, self._db_conn
+            ).transcribe_rows(conv_rows, conv_short_id or "")
+            for key, value in stats.items():
+                total[key] += value
+            print(
+                f"  [voice] 回填会话完成: 总数={stats['voices']} "
+                f"请求={stats['requested']} 成功={stats['succeeded']} "
+                f"失败={stats['failed']} 跳过={stats['skipped']}"
+            )
+
+        print(
+            "[voice] 历史回填完成: "
+            f"总数={total['voices']} 请求={total['requested']} "
+            f"成功={total['succeeded']} 失败={total['failed']} "
+            f"跳过={total['skipped']}"
+        )
+        return total
 
     @staticmethod
     def _make_msg_id(conv_id, msg):

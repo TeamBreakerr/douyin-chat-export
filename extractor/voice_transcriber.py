@@ -602,6 +602,42 @@ def parse_recognition_response(
     return output
 
 
+def pending_voice_rows(conn: Any, conversation_names: list[str] | None = None) -> list[Any]:
+    """Return likely pending voice rows already stored in the local DB.
+
+    The cheap SQL predicates keep text/image/video rows out of the Python
+    pass.  ``is_voice_message`` is still applied by the caller because some
+    historical payloads share the same ``resource_url`` field as images.
+    This query is used only by the explicit historical backfill task.
+    """
+    params: list[Any] = []
+    where = (
+        "m.msg_type IN (0, 1) "
+        "AND m.raw_data IS NOT NULL "
+        "AND m.raw_data LIKE '%resource_url%' "
+        "AND (vt.status IS NULL OR vt.status <> 'success')"
+    )
+    if conversation_names:
+        clauses = []
+        for name in conversation_names:
+            name = _text(name)
+            if name:
+                clauses.append("c.name LIKE ?")
+                params.append(f"%{name}%")
+        if clauses:
+            where += " AND (" + " OR ".join(clauses) + ")"
+    return conn.execute(
+        f"""SELECT m.*, c.name AS conversation_name,
+                         vt.status AS voice_transcription_status
+                  FROM messages m
+                  JOIN conversations c ON c.conv_id = m.conv_id
+             LEFT JOIN voice_transcriptions vt ON vt.msg_id = m.msg_id
+                 WHERE {where}
+              ORDER BY m.conv_id ASC, m.seq ASC""",
+        params,
+    ).fetchall()
+
+
 class VoiceTranscriber:
     """Batch native recognition requests for messages in one conversation."""
 
@@ -646,17 +682,60 @@ class VoiceTranscriber:
         )
 
     async def transcribe_conversation(
-        self, conv_id: str, conv_short_id: str, self_uuid: str | None = None
+        self,
+        conv_id: str,
+        conv_short_id: str,
+        self_uuid: str | None = None,
+        message_ids: list[str] | None = None,
     ) -> dict[str, int]:
-        rows = self.conn.execute(
-            """SELECT m.*, vt.status AS voice_transcription_status
-               FROM messages m
-               LEFT JOIN voice_transcriptions vt ON vt.msg_id = m.msg_id
-               WHERE m.conv_id = ?
-               ORDER BY m.seq ASC""",
-            (conv_id,),
-        ).fetchall()
+        """Transcribe a conversation, or only the supplied message IDs.
 
+        The full-conversation form is reserved for an explicit historical
+        backfill.  Normal incremental scraping passes the IDs seen in its API
+        batches so it does not rescan an entire conversation on every run.
+        """
+        if message_ids is not None and not message_ids:
+            return {"voices": 0, "cached": 0, "requested": 0,
+                    "succeeded": 0, "failed": 0, "skipped": 0}
+        if message_ids is not None:
+            ids = list(dict.fromkeys(_text(value) for value in message_ids if _text(value)))
+            if not ids:
+                return {"voices": 0, "cached": 0, "requested": 0,
+                        "succeeded": 0, "failed": 0, "skipped": 0}
+            rows = []
+            # Stay below SQLite's common 999-bound-variable limit on full
+            # scrapes containing many voice messages.
+            for start in range(0, len(ids), 900):
+                chunk = ids[start:start + 900]
+                placeholders = ",".join("?" for _ in chunk)
+                rows.extend(self.conn.execute(
+                    f"""SELECT m.*, vt.status AS voice_transcription_status
+                           FROM messages m
+                      LEFT JOIN voice_transcriptions vt ON vt.msg_id = m.msg_id
+                          WHERE m.conv_id = ?
+                            AND m.msg_id IN ({placeholders})
+                       ORDER BY m.seq ASC""",
+                    [conv_id, *chunk],
+                ).fetchall())
+            rows.sort(key=lambda row: row["seq"] or 0)
+        else:
+            rows = self.conn.execute(
+                """SELECT m.*, vt.status AS voice_transcription_status
+                     FROM messages m
+                LEFT JOIN voice_transcriptions vt ON vt.msg_id = m.msg_id
+                    WHERE m.conv_id = ?
+                 ORDER BY m.seq ASC""",
+                (conv_id,),
+            ).fetchall()
+        return await self.transcribe_rows(rows, conv_short_id, self_uuid)
+
+    async def transcribe_rows(
+        self,
+        rows: list[Any],
+        conv_short_id: str,
+        self_uuid: str | None = None,
+    ) -> dict[str, int]:
+        """Transcribe the supplied database rows without another DB scan."""
         stats = {"voices": 0, "cached": 0, "requested": 0,
                  "succeeded": 0, "failed": 0, "skipped": 0}
         candidates: list[Any] = []

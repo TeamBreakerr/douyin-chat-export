@@ -198,8 +198,8 @@ def test_full_scrape_reuses_successful_transcription_after_refetch(temp_db):
     conn.close()
 
 
-def test_api_scrape_runs_transcription_hook_even_when_no_new_page_rows(temp_db):
-    """An incremental run can backfill old voice rows after the fetch is empty."""
+def test_api_scrape_skips_transcription_when_no_new_page_rows(temp_db):
+    """An empty incremental fetch does not rescan historical messages."""
 
     class EmptyApiPage:
         async def evaluate(self, script, arg=None):
@@ -213,15 +213,15 @@ def test_api_scrape_runs_transcription_hook_even_when_no_new_page_rows(temp_db):
     scraper.page = EmptyApiPage()
     calls = []
 
-    async def transcribe(conv_id, short_id):
-        calls.append((conv_id, short_id))
+    async def transcribe(*args, **kwargs):
+        calls.append((args, kwargs))
         return {"voices": 0, "cached": 0, "requested": 0,
                 "succeeded": 0, "failed": 0, "skipped": 0}
 
     scraper._transcribe_voice_messages = transcribe
     asyncio.run(scraper._api_fetch_all_messages("c1", "short-1", incremental=True))
 
-    assert calls == [("c1", "short-1")]
+    assert calls == []
     conn.close()
 
 
@@ -268,8 +268,8 @@ def test_api_scrape_classifies_awe_type_zero_voice_before_text(temp_db):
 
     hook_calls = []
 
-    async def transcribe(conv_id, short_id):
-        hook_calls.append((conv_id, short_id))
+    async def transcribe(conv_id, short_id, *, message_ids=None):
+        hook_calls.append((conv_id, short_id, message_ids))
         return {"voices": 1, "cached": 0, "requested": 0,
                 "succeeded": 0, "failed": 0, "skipped": 0}
 
@@ -285,5 +285,56 @@ def test_api_scrape_classifies_awe_type_zero_voice_before_text(temp_db):
     ).fetchone()
     assert row[0:2] == (0, "[语音 2秒]")
     assert json.loads(row[2])["type_code"] == 17
-    assert hook_calls == [("c1", "short-1")]
+    assert hook_calls == [("c1", "short-1", ["srv_6001"])]
+    conn.close()
+
+
+def test_history_backfill_uses_local_voice_candidates_without_message_fetch(
+    temp_db, monkeypatch
+):
+    conn = connect(foreign_keys=True)
+    insert_conversation(conn, "123456", "语音会话")
+    insert_message(
+        conn, "voice", "123456", 1, content="[语音]", msg_type=0,
+        raw_data=_voice_raw("8001"),
+    )
+    insert_message(conn, "text", "123456", 2, content="普通消息", msg_type=1)
+    conn.commit()
+
+    class BackfillPage:
+        async def evaluate(self, script, arg=None):
+            if "mainOptions" in script:
+                return "self-uid"
+            assert isinstance(arg, list)
+            payload = arg[1][0]
+            return {
+                "status": 200,
+                "body": {"recognition_results": [{
+                    "message_id": payload["message_id"],
+                    "text_result": "历史补充完成",
+                }]},
+            }
+
+    async def no_navigation():
+        return None
+
+    async def no_sleep(_seconds):
+        return None
+
+    scraper = WebChatScraper()
+    scraper._db_conn = conn
+    scraper.page = BackfillPage()
+    scraper.navigate_to_chat = no_navigation
+    monkeypatch.setattr("extractor.web_scraper.asyncio.sleep", no_sleep)
+
+    stats = asyncio.run(scraper.backfill_voice_transcriptions())
+
+    assert stats["voices"] == 1
+    assert stats["succeeded"] == 1
+    assert conn.execute(
+        "SELECT text_result FROM voice_transcriptions WHERE msg_id='voice'"
+    ).fetchone()[0] == "历史补充完成"
+    assert conn.execute(
+        "SELECT COUNT(*) FROM voice_transcriptions WHERE msg_id='text'"
+    ).fetchone()[0] == 0
     conn.close()

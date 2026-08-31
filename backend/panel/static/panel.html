@@ -415,6 +415,34 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     <div class="meta" id="scrapeTime"></div>
     <div class="log-box" id="scrapeLog"></div>
   </div>
+  <div class="section">
+    <h2 data-i18n="voiceBackfillTitle">语音转写补充</h2>
+    <div class="meta" style="margin-bottom:10px" data-i18n="voiceBackfillDesc">只处理当前数据库中尚未成功转写的语音，不重新采集聊天记录。</div>
+    <div class="row">
+      <button class="btn btn-primary" id="voiceBackfillBtn" onclick="startVoiceBackfill()" data-i18n="voiceBackfillBtn">补充历史语音转写</button>
+      <span class="status status-idle" id="voiceBackfillStatus" data-i18n="idle">闲置</span>
+    </div>
+    <div class="meta" id="voiceBackfillMsg" style="margin-top:6px"></div>
+  </div>
+  <div class="section">
+    <h2 data-i18n="mediaTitle">媒体下载</h2>
+    <div class="meta" style="margin-bottom:10px" data-i18n="mediaDesc">采集时将图片/表情包下载到本地，避免抖音 CDN 链接过期后无法显示。</div>
+    <label class="conv-check" style="margin-bottom:10px;cursor:pointer;">
+      <input type="checkbox" id="downloadImagesToggle" onchange="toggleDownloadImages()">
+      <span data-i18n="autoDownloadNew">新采集消息自动下载图片到本地</span>
+    </label>
+    <div class="row">
+      <button class="btn btn-primary" id="backfillBtn" onclick="startBackfill()" data-i18n="backfillBtn">下载历史图片</button>
+      <span class="status status-idle" id="backfillStatus" data-i18n="idle">闲置</span>
+    </div>
+    <div class="meta" id="backfillMsg" style="margin-top:6px"></div>
+    <div class="row" style="margin-top:10px">
+      <button class="btn btn-primary" id="videoBackfillBtn" onclick="startVideoBackfill()" data-i18n="videoBackfillBtn">下载历史视频</button>
+      <span class="status status-idle" id="videoBackfillStatus" data-i18n="idle">闲置</span>
+      <span class="meta" id="videoPendingCount" style="margin-left:8px"></span>
+    </div>
+    <div class="meta" id="videoBackfillMsg" style="margin-top:6px"></div>
+  </div>
     </div>
 
     <!-- Schedule -->
@@ -479,25 +507,6 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     </div>
     <div class="conv-list-box" id="exportConvList"></div>
     <div class="meta" id="exportMsg"></div>
-  </div>
-  <div class="section">
-    <h2 data-i18n="mediaTitle">媒体下载</h2>
-    <div class="meta" style="margin-bottom:10px" data-i18n="mediaDesc">将图片/表情包下载到本地，避免抖音 CDN 链接过期后无法显示。</div>
-    <label class="conv-check" style="margin-bottom:10px;cursor:pointer;">
-      <input type="checkbox" id="downloadImagesToggle" onchange="toggleDownloadImages()">
-      <span data-i18n="autoDownloadNew">新采集消息自动下载图片到本地</span>
-    </label>
-    <div class="row">
-      <button class="btn btn-primary" id="backfillBtn" onclick="startBackfill()" data-i18n="backfillBtn">下载历史图片</button>
-      <span class="status status-idle" id="backfillStatus" data-i18n="idle">闲置</span>
-    </div>
-    <div class="meta" id="backfillMsg" style="margin-top:6px"></div>
-    <div class="row" style="margin-top:10px">
-      <button class="btn btn-primary" id="videoBackfillBtn" onclick="startVideoBackfill()" data-i18n="videoBackfillBtn">下载历史视频</button>
-      <span class="status status-idle" id="videoBackfillStatus" data-i18n="idle">闲置</span>
-      <span class="meta" id="videoPendingCount" style="margin-left:8px"></span>
-    </div>
-    <div class="meta" id="videoBackfillMsg" style="margin-top:6px"></div>
   </div>
     </div>
 
@@ -601,6 +610,9 @@ const T = {
     full: '全量',
     start: '开始',
     stop: '停止',
+    voiceBackfillTitle: '语音转写补充',
+    voiceBackfillDesc: '只处理当前数据库中尚未成功转写的语音，不重新采集聊天记录。',
+    voiceBackfillBtn: '补充历史语音转写',
     selectConvsLabel: '选择会话:',
     selectAll: '全选',
     selectNone: '清空',
@@ -653,7 +665,7 @@ const T = {
     discovered: (n) => '发现 ' + n + ' 个会话',
     confirmMultiExport: (n) => '将导出 ' + n + ' 个会话并打包为 zip，是否继续？',
     mediaTitle: '媒体下载',
-    mediaDesc: '将图片/表情包下载到本地，避免抖音 CDN 链接过期后无法显示。',
+    mediaDesc: '采集时将图片/表情包下载到本地，避免抖音 CDN 链接过期后无法显示。',
     autoDownloadNew: '新采集消息自动下载图片到本地',
     backfillBtn: '下载历史图片',
     backfillRunning: (done, total) => '下载中: ' + done + ' / ' + total,
@@ -698,6 +710,9 @@ const T = {
     full: 'Full',
     start: 'Start',
     stop: 'Stop',
+    voiceBackfillTitle: 'Voice transcription backfill',
+    voiceBackfillDesc: 'Process only unrecognized voices already in the local database; do not fetch chat history again.',
+    voiceBackfillBtn: 'Backfill voice transcriptions',
     selectConvsLabel: 'Select conversations:',
     selectAll: 'Select all',
     selectNone: 'Clear',
@@ -750,7 +765,7 @@ const T = {
     discovered: (n) => 'Found ' + n + ' conversations',
     confirmMultiExport: (n) => 'Export ' + n + ' conversations as a zip. Continue?',
     mediaTitle: 'Media Download',
-    mediaDesc: 'Save images and emoji locally to keep them viewable after Douyin CDN URLs expire.',
+    mediaDesc: 'Download images and emoji during scraping so they remain viewable after Douyin CDN URLs expire.',
     autoDownloadNew: 'Auto-download images to local for newly scraped messages',
     backfillBtn: 'Backfill historical images',
     backfillRunning: (done, total) => 'Downloading: ' + done + ' / ' + total,
@@ -833,6 +848,7 @@ let selectedMap = {           // section -> Set of nicknames
   export: new Set(),
   schedule: new Set(),
 };
+let voiceBackfillActive = false;
 let lastDiscoverStatus = 'idle';
 let lastDiscoverMsg = '';
 
@@ -849,12 +865,18 @@ async function loadStatus() {
     const se = document.getElementById('scrapeStatus');
     setStatusEl(se, ss.status);
     document.getElementById('scrapeBtn').disabled = ss.status === 'running';
+    document.getElementById('voiceBackfillBtn').disabled = ss.status === 'running';
     document.getElementById('stopBtn').style.display = ss.status === 'running' ? '' : 'none';
     let timeStr = '';
     if (ss.started_at) timeStr += t('startedAt') + new Date(ss.started_at * 1000).toLocaleString();
     if (ss.finished_at) timeStr += '  ' + t('finishedAt') + new Date(ss.finished_at * 1000).toLocaleString();
     if (ss.message) timeStr += '  ' + ss.message;
     document.getElementById('scrapeTime').textContent = timeStr;
+
+    const voiceJob = voiceBackfillActive || ss.kind === 'voice_backfill';
+    setStatusEl(document.getElementById('voiceBackfillStatus'), voiceJob ? ss.status : 'idle');
+    setDynText(document.getElementById('voiceBackfillMsg'), voiceJob ? ss.message : '');
+    if (voiceBackfillActive && ss.status !== 'running') voiceBackfillActive = false;
 
     if (ss.status === 'running' || ss.status === 'completed' || ss.status === 'failed') {
       loadLog();
@@ -1115,6 +1137,26 @@ async function startScrape() {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ incremental, conversations }),
   });
+  loadStatus();
+}
+
+async function startVoiceBackfill() {
+  const conversations = [...selectedMap.scraper];
+  voiceBackfillActive = true;
+  document.getElementById('voiceBackfillBtn').disabled = true;
+  const r = await fetch('/panel/api/voice-transcriptions/backfill', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ conversations }),
+  });
+  if (!r.ok) {
+    const d = await r.json().catch(() => ({}));
+    voiceBackfillActive = false;
+    setStatusEl(document.getElementById('voiceBackfillStatus'), 'failed');
+    setDynText(document.getElementById('voiceBackfillMsg'), d.error || t('error'));
+    document.getElementById('voiceBackfillBtn').disabled = false;
+    return;
+  }
   loadStatus();
 }
 

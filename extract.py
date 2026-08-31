@@ -22,6 +22,8 @@ def _parse_args():
         args["mode"] = "discover"
     elif "--list-conversations" in sys.argv:
         args["mode"] = "list_conversations"
+    elif "--transcribe-voices" in sys.argv:
+        args["mode"] = "voice_backfill"
     elif "--export" in sys.argv:
         args["mode"] = "export"
 
@@ -103,6 +105,8 @@ async def run():
             with open(out_path, "w", encoding="utf-8") as f:
                 _json.dump(payload, f, ensure_ascii=False, indent=2)
             print(f"[+] 会话列表已写入 {out_path}")
+        elif args["mode"] == "voice_backfill":
+            await scraper.backfill_voice_transcriptions(args["name_filter"])
         else:
             await scraper.extract_all()
 
