@@ -197,7 +197,7 @@
               </div>
               <!-- 语音消息 -->
               <div v-else-if="isVoiceMsg(msg)" class="msg-bubble msg-voice-bubble">
-                <div class="msg-voice-player">
+                <div class="msg-voice-player" :class="{ playing: isVoicePlaying(msg) }">
                   <button
                     type="button"
                     class="msg-voice-play"
@@ -205,9 +205,16 @@
                     :disabled="!getVoiceUrl(msg)"
                     :aria-label="isVoicePlaying(msg) ? '暂停语音' : '播放语音'"
                     @click.stop="toggleVoice(msg)"
-                  >{{ isVoicePlaying(msg) ? '❚❚' : '▶' }}</button>
+                  >
+                    <svg v-if="!isVoicePlaying(msg)" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M8 5.2v13.6a1 1 0 0 0 1.55.83l9.25-6.8a1 1 0 0 0 0-1.66l-9.25-6.8A1 1 0 0 0 8 5.2Z" />
+                    </svg>
+                    <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M7 5.5h3.4v13H7v-13Zm6.6 0H17v13h-3.4v-13Z" />
+                    </svg>
+                  </button>
                   <span class="msg-voice-wave" aria-hidden="true">
-                    <i v-for="n in 16" :key="n"></i>
+                    <i v-for="n in 13" :key="n"></i>
                   </span>
                   <span class="msg-voice-dur">{{ getVoiceDuration(msg) }}″</span>
                   <audio
@@ -1162,82 +1169,126 @@ watch(() => props.jumpToSeq, async (seq) => {
 
 /* 语音消息：沿用普通消息气泡，并在播放器与转写之间分隔 */
 .msg-voice-bubble {
-  min-width: 230px;
-  max-width: 360px;
-  padding: 10px 12px;
+  min-width: 248px;
+  max-width: 380px;
+  padding: 11px 13px 10px;
 }
 .msg-voice-player {
   display: flex;
   align-items: center;
-  gap: 10px;
-  min-height: 36px;
+  gap: 12px;
+  min-height: 40px;
 }
 .msg-voice-play {
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   padding: 0;
   border: 0;
   border-radius: 50%;
-  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
-  color: var(--text-primary);
-  font-size: 16px;
-  line-height: 36px;
-  text-align: center;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent) 14%, var(--bg-message-other));
+  color: var(--accent);
+  box-shadow: 0 2px 7px color-mix(in srgb, var(--text-primary) 12%, transparent);
   cursor: pointer;
   flex: 0 0 auto;
+  transition: transform 0.15s, background 0.15s, color 0.15s;
 }
+.msg-voice-play svg { width: 20px; height: 20px; fill: currentColor; }
 .msg-voice-play:hover:not(:disabled),
 .msg-voice-play.playing {
-  background: color-mix(in srgb, var(--accent) 22%, transparent);
+  transform: scale(1.04);
+  background: var(--accent);
+  color: #fff;
+}
+.msg-item.msg-self .msg-voice-play {
+  background: color-mix(in srgb, #fff 92%, transparent);
+  color: var(--accent);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.14);
+}
+.msg-item.msg-self .msg-voice-play:hover:not(:disabled),
+.msg-item.msg-self .msg-voice-play.playing {
+  background: #fff;
   color: var(--accent);
 }
 .msg-voice-play:disabled {
   opacity: 0.45;
   cursor: default;
+  box-shadow: none;
 }
 .msg-voice-wave {
   display: flex;
   align-items: center;
-  gap: 3px;
-  height: 28px;
+  gap: 4px;
+  height: 32px;
   flex: 1;
-  min-width: 72px;
+  min-width: 74px;
+  padding: 0 1px;
 }
 .msg-voice-wave i {
   display: block;
-  width: 4px;
-  height: 10px;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--text-primary) 72%, transparent);
+  width: 3px;
+  height: 14px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 42%, var(--text-primary));
+  opacity: 0.78;
+  transform-origin: center;
+  transition: opacity 0.2s, background 0.2s;
 }
-.msg-voice-wave i:nth-child(2n) { height: 17px; }
-.msg-voice-wave i:nth-child(3n) { height: 24px; }
-.msg-voice-wave i:nth-child(5n) { height: 14px; }
+.msg-voice-wave i:nth-child(1) { height: 12px; }
+.msg-voice-wave i:nth-child(2) { height: 20px; }
+.msg-voice-wave i:nth-child(3) { height: 28px; }
+.msg-voice-wave i:nth-child(4) { height: 17px; }
+.msg-voice-wave i:nth-child(5) { height: 24px; }
+.msg-voice-wave i:nth-child(6) { height: 31px; }
+.msg-voice-wave i:nth-child(7) { height: 20px; }
+.msg-voice-wave i:nth-child(8) { height: 27px; }
+.msg-voice-wave i:nth-child(9) { height: 14px; }
+.msg-voice-wave i:nth-child(10) { height: 24px; }
+.msg-voice-wave i:nth-child(11) { height: 18px; }
+.msg-voice-wave i:nth-child(12) { height: 28px; }
+.msg-voice-wave i:nth-child(13) { height: 13px; }
 .msg-item.msg-self .msg-voice-wave i {
-  background: color-mix(in srgb, var(--text-on-self) 78%, transparent);
+  background: color-mix(in srgb, var(--text-on-self) 82%, transparent);
+  opacity: 0.86;
+}
+@keyframes voice-wave-pulse {
+  0%, 100% { transform: scaleY(0.58); opacity: 0.58; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+.msg-voice-player.playing .msg-voice-wave i {
+  animation: voice-wave-pulse 0.9s ease-in-out infinite alternate;
+}
+.msg-voice-player.playing .msg-voice-wave i:nth-child(2n) { animation-delay: -0.25s; }
+.msg-voice-player.playing .msg-voice-wave i:nth-child(3n) { animation-delay: -0.5s; }
+@media (prefers-reduced-motion: reduce) {
+  .msg-voice-player.playing .msg-voice-wave i { animation: none; }
 }
 .msg-voice audio {
   display: none;
 }
 .msg-voice-dur {
-  font-size: 12px;
+  min-width: 25px;
+  font-size: 13px;
+  font-weight: 600;
   color: var(--text-muted);
   white-space: nowrap;
+  text-align: right;
 }
 .msg-item.msg-self .msg-voice-dur {
-  color: color-mix(in srgb, var(--text-on-self) 72%, transparent);
+  color: color-mix(in srgb, var(--text-on-self) 76%, transparent);
 }
 .msg-voice-divider {
   border-top: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
-  margin: 9px 0 8px;
+  margin: 11px 0 9px;
 }
 .msg-item.msg-self .msg-voice-divider {
   border-top-color: color-mix(in srgb, var(--text-on-self) 25%, transparent);
 }
 .msg-voice-transcript {
   color: inherit;
-  font-size: 13px;
-  line-height: 1.5;
+  font-size: 14px;
+  line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
 }
