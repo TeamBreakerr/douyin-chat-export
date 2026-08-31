@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Extract Douyin chat messages via web version using Playwright + DOM scraping."""
 import asyncio
+from collections import defaultdict
 import json
 import hashlib
 import os
@@ -25,6 +26,12 @@ from playwright.async_api import async_playwright
 from common import paths
 from extractor.models import (
     init_db, get_db, upsert_user, upsert_conversation, update_conversation_stats,
+)
+from extractor.voice_transcriber import (
+    VoiceTranscriber,
+    backfill_sender_sec_uids,
+    is_voice_message,
+    pending_voice_rows,
 )
 
 CHAT_URL = "https://www.douyin.com/chat?isPopup=1"
@@ -1287,8 +1294,17 @@ class WebChatScraper:
         """
         conn = self._db_conn
         conn.execute("DROP TABLE IF EXISTS temp.msg_backup")
+        conn.execute("DROP TABLE IF EXISTS temp.voice_transcription_backup")
         conn.execute(
             "CREATE TEMP TABLE msg_backup AS SELECT * FROM messages WHERE conv_id = ?",
+            (conv_id,),
+        )
+        # 语音转写与消息一起回滚；全量抓取在窗口期失败时不能丢掉已完成的转写。
+        conn.execute(
+            """CREATE TEMP TABLE voice_transcription_backup AS
+               SELECT vt.* FROM voice_transcriptions vt
+               JOIN messages m ON m.msg_id = vt.msg_id
+               WHERE m.conv_id = ?""",
             (conv_id,),
         )
         return conn.execute("SELECT COUNT(*) FROM temp.msg_backup").fetchone()[0]
@@ -1299,18 +1315,51 @@ class WebChatScraper:
         一个会话在抖音那边真的被清空、导致抓到 0 条的概率，远低于抓取本身出问题。
         宁可留着旧记录（要清空有面板的删除功能），也不能让一次失败的抓取把历史抹掉。
         """
-        if not backed_up:
-            return
         conn = self._db_conn
+        if not backed_up:
+            # _backup_conv_messages creates both TEMP tables even when the
+            # message snapshot is empty.  Always clean them up so a later
+            # full scrape on the same connection can create a fresh backup.
+            conn.execute("DROP TABLE IF EXISTS temp.msg_backup")
+            conn.execute("DROP TABLE IF EXISTS temp.voice_transcription_backup")
+            conn.commit()
+            return
         remaining = conn.execute(
             "SELECT COUNT(*) FROM messages WHERE conv_id = ?", (conv_id,)
         ).fetchone()[0]
         if remaining == 0:
             conn.execute("INSERT INTO messages SELECT * FROM temp.msg_backup")
+            conn.execute(
+                """INSERT OR REPLACE INTO voice_transcriptions
+                   SELECT * FROM temp.voice_transcription_backup"""
+            )
             update_conversation_stats(conn, conv_id)
             print(f"  [!] 本次全量抓取一条消息都没拿到，已还原原有的 {backed_up} 条旧消息")
         conn.execute("DROP TABLE IF EXISTS temp.msg_backup")
+        conn.execute("DROP TABLE IF EXISTS temp.voice_transcription_backup")
         conn.commit()
+
+    def _reuse_backed_up_voice_transcriptions(self, conv_id):
+        """Restore successful cache entries for messages found by a full refetch."""
+        conn = self._db_conn
+        backup_exists = conn.execute(
+            """SELECT 1 FROM sqlite_temp_master
+               WHERE type = 'table' AND name = 'voice_transcription_backup'"""
+        ).fetchone()
+        if not backup_exists:
+            return 0
+        cur = conn.execute(
+            """INSERT OR IGNORE INTO voice_transcriptions
+               (msg_id, message_id, text_result, status, error, updated_at)
+               SELECT b.msg_id, b.message_id, b.text_result, b.status,
+                      b.error, b.updated_at
+               FROM temp.voice_transcription_backup b
+               JOIN messages m ON m.msg_id = b.msg_id
+               WHERE m.conv_id = ? AND b.status = 'success'""",
+            (conv_id,),
+        )
+        conn.commit()
+        return cur.rowcount
 
 
     async def _clear_sdk_cache(self):
@@ -1606,6 +1655,74 @@ class WebChatScraper:
             };
         }""")
 
+    async def _lookup_sender_sec_uids(
+        self,
+        conv_id: str,
+        conv_short_id: str,
+        sender_uids: set[str],
+        *,
+        max_pages: int = 20,
+    ) -> tuple[dict[str, str], dict[str, int]]:
+        """Find missing sender identities without importing remote messages.
+
+        The normal message API returns ``sender_uid`` and protobuf field 14
+        (``sender_sec_uid``) together.  For voice backfill we only need that
+        identity pair, so fetch one page at a time and stop as soon as every
+        requested sender has been observed.  The returned messages are never
+        passed to ``_store_messages``.
+        """
+        targets = {str(uid) for uid in sender_uids if str(uid)}
+        stats = {"target_senders": len(targets), "pages": 0, "matched": 0}
+        if not targets or not conv_short_id:
+            return {}, stats
+
+        await self._inject_api_tools()
+        observed: defaultdict[str, set[str]] = defaultdict(set)
+        next_ts = "9999999999999999"
+        has_more = True
+
+        while targets and has_more and stats["pages"] < max_pages:
+            try:
+                result = await self.page.evaluate(
+                    """async (args) => {
+                        const [convId, cursor, ts] = args;
+                        return await window.__imApi.fetchBatch(convId, cursor, ts, 1);
+                    }""",
+                    [conv_id, conv_short_id, next_ts],
+                )
+            except Exception as exc:
+                print(f"  [!] sec_uid 定向补取失败: {exc}")
+                break
+
+            stats["pages"] += 1
+            if not result or not result.get("msgs"):
+                break
+            has_more = result.get("hasMore", 0) == 1
+            next_ts = result.get("nextTs", next_ts)
+
+            for message in result["msgs"]:
+                message_conv_id = str(message.get("conv_id") or "")
+                if message_conv_id and message_conv_id != conv_id:
+                    continue
+                sender_uid = str(message.get("sender_uid") or "")
+                sec_uid = str(message.get("sender_sec_uid") or "")
+                if sender_uid in targets and sec_uid:
+                    observed[sender_uid].add(sec_uid)
+
+            # A sender is complete only when this lookup has one consistent
+            # identity. Conflicts stay unresolved instead of guessing.
+            targets = {
+                uid for uid in targets if len(observed.get(uid, set())) != 1
+            }
+
+        mapping = {
+            uid: next(iter(sec_uids))
+            for uid, sec_uids in observed.items()
+            if len(sec_uids) == 1
+        }
+        stats["matched"] = len(mapping)
+        return mapping, stats
+
     async def _api_fetch_all_messages(self, conv_id, cursor, incremental=False):
         """用 API 直接获取全部历史消息。
 
@@ -1636,6 +1753,7 @@ class WebChatScraper:
         total_fetched = 0
         batch_num = 0
         zero_saved_streak = 0  # 连续 saved=0 的批次计数
+        voice_message_ids = []  # 只转写本次实际新增的语音
         pages_per_batch = 20  # 每批获取 20 页 = 1000 条
         has_more = True
         start_time = time.time()
@@ -1707,7 +1825,34 @@ class WebChatScraper:
                     cj = json.loads(content_json)
                     awe_type = cj.get("aweType", -1)
                     text = cj.get("text", "") or cj.get("description", "")
-                    if awe_type in (500, 501, 507, 508, 510, 514, 516):
+                    # Voice payloads currently use aweType=0 on the web.  Do
+                    # this test before the generic aweType=0 text branch, or
+                    # they are stored as msg_type=1 and never transcribed.
+                    voice_resource = cj.get("resource_url")
+                    voice_duration = cj.get("duration")
+                    if (
+                        isinstance(voice_resource, dict)
+                        and voice_duration in (None, "")
+                    ):
+                        voice_duration = voice_resource.get("duration")
+                    if (
+                        isinstance(voice_resource, dict)
+                        and voice_duration not in (None, "")
+                        and not (
+                            isinstance(cj.get("video"), dict)
+                            and cj.get("video", {}).get("vid")
+                        )
+                        and cj.get("aweType") not in (
+                            2702, 2703, 2704, "2702", "2703", "2704"
+                        )
+                    ):
+                        msg_type = "other"  # keep DB type=0 for voice
+                        try:
+                            dur_sec = round(float(voice_duration) / 1000)
+                        except (TypeError, ValueError):
+                            dur_sec = 0
+                        text = text or (f"[语音 {dur_sec}秒]" if dur_sec else "[语音]")
+                    elif awe_type in (500, 501, 507, 508, 510, 514, 516):
                         # 表情包/贴纸
                         msg_type = "emoji"
                         if not text:
@@ -1762,11 +1907,6 @@ class WebChatScraper:
                     elif awe_type >= 100000:
                         msg_type = "other"
                         text = text or cj.get("push_detail") or "[系统消息]"
-                    elif cj.get("resource_url") and cj.get("duration"):
-                        # 语音消息：有 resource_url 和 duration
-                        msg_type = "other"  # 保持 type=0，前端会检测 resource_url
-                        dur_sec = round(cj["duration"] / 1000)
-                        text = text or f"[语音 {dur_sec}秒]"
                     elif cj.get("video", {}).get("vid") and cj.get("poster", {}).get("origin_url_list"):
                         # 视频消息：awe_type=0 的视频走单独路径，cj.video.vid + cj.poster
                         # 真正的视频流要 vid → 加密 URL 反查（待办），目前只下载 poster 封面图
@@ -1802,7 +1942,7 @@ class WebChatScraper:
                 ref_msg = m.get("_ref_msg")
                 ref_msg_json = json.dumps(ref_msg, ensure_ascii=False) if ref_msg else None
 
-                converted.append({
+                converted_message = {
                     "server_id": m.get("server_id", ""),
                     "content": text,
                     "msg_type": msg_type,
@@ -1820,15 +1960,30 @@ class WebChatScraper:
                     "is_recalled": m.get("is_recalled", 0),
                     "content_json": content_json,
                     "ref_msg": ref_msg_json,
-                })
+                }
+                # Keep the original protobuf type in raw_data when present.
+                # Recognition still uses its separate, fixed message_type=7 contract.
+                if m.get("type_code") is not None:
+                    converted_message["type_code"] = m["type_code"]
+                converted.append(converted_message)
 
             # 下载语音文件
             await self._download_voice_files(converted)
             # 下载图片/表情（按配置）
             await self._download_image_files(converted)
 
-            newly_inserted = self._store_messages(converted, conv_id, batch_seq_start=0)
+            newly_inserted, inserted_message_ids = self._store_messages(
+                converted, conv_id, batch_seq_start=0
+            )
             total_saved += newly_inserted
+            voice_ids = {
+                self._make_msg_id(conv_id, message)
+                for message in converted
+                if is_voice_message(message)
+            }
+            voice_message_ids.extend(
+                msg_id for msg_id in inserted_message_ids if msg_id in voice_ids
+            )
 
             elapsed = time.time() - start_time
             speed = total_fetched / elapsed if elapsed > 0 else 0
@@ -1859,13 +2014,36 @@ class WebChatScraper:
                 print(f"  [*] 已到达聊天记录起点")
                 break
 
-        # 5. 补全发送者身份（群聊必需）。失败不能影响已抓到的消息。
+        # 5. 原生语音识别使用同一浏览器上下文的 cookies；放在消息落库之后，
+        # 只处理本次实际新增的语音。历史语音由面板里的独立回填任务处理，
+        # 避免每次增量采集都扫描整个会话。
+        if voice_message_ids:
+            try:
+                self._reuse_backed_up_voice_transcriptions(conv_id)
+                voice_stats = await self._transcribe_voice_messages(
+                    conv_id, api_cursor, message_ids=voice_message_ids
+                )
+                if voice_stats.get("voices"):
+                    print(
+                        "  [voice] 识别统计: "
+                        f"总数={voice_stats['voices']} "
+                        f"缓存={voice_stats['cached']} "
+                        f"请求={voice_stats['requested']} "
+                        f"成功={voice_stats['succeeded']} "
+                        f"失败={voice_stats['failed']} "
+                        f"跳过={voice_stats['skipped']}"
+                    )
+            except Exception as e:
+                # 转写失败不应回滚已经抓到的聊天记录。
+                print(f"  [!] 原生语音识别失败（消息已保存）: {e}")
+
+        # 6. 补全发送者身份（群聊必需）。失败不能影响已抓到的消息。
         try:
             await self._resolve_sender_identities(sec_by_uid)
         except Exception as e:
             print(f"  [!] 补全发送者信息失败: {e}")
 
-        # 6. 归一化 seq
+        # 7. 归一化 seq
         print(f"  [*] 归一化消息序号 (按服务端排序)...")
         rows = self._db_conn.execute(
             "SELECT msg_id FROM messages WHERE conv_id = ? ORDER BY seq ASC",
@@ -1882,6 +2060,143 @@ class WebChatScraper:
         elapsed = time.time() - start_time
         print(f"  [*] API 获取完成: {total_fetched} 条消息, {total_saved} 条新增, 耗时 {elapsed:.1f}s")
         return total_saved
+
+    async def _transcribe_voice_messages(self, conv_id, conv_short_id, message_ids=None):
+        """识别指定消息中的语音；不传 IDs 时用于显式历史回填。"""
+        return await VoiceTranscriber(
+            self.page, self._db_conn
+        ).transcribe_conversation(
+            conv_id, conv_short_id, message_ids=message_ids
+        )
+
+    async def backfill_voice_transcriptions(self, name_filter=None):
+        """补充当前数据库中尚未成功识别的历史语音。
+
+        This deliberately starts from locally stored voice candidates.  It
+        does not fetch the conversation history again; the browser is used
+        only for authentication, UUID lookup, and short-id discovery when a
+        one-to-one conversation needs it.
+        """
+        filter_parts = [
+            part.strip()
+            for part in (name_filter or "").split(",")
+            if part.strip()
+        ]
+        rows = pending_voice_rows(self._db_conn, filter_parts or None)
+        candidates = [row for row in rows if is_voice_message(row)]
+        candidates, sec_stats = backfill_sender_sec_uids(
+            self._db_conn, candidates
+        )
+        if sec_stats["missing"]:
+            print(
+                "[voice] 检测到语音消息缺少 sec_uid: "
+                f"{sec_stats['missing']} 条；"
+                f"从本地已有消息获取到 {sec_stats['mapped_sender_uids']} 个"
+                " sender_uid→sec_uid 映射"
+            )
+        print(
+            "[voice] sec_uid 回填: "
+            f"检查消息={sec_stats['checked']} 缺失={sec_stats['missing']} "
+            f"匹配发送者={sec_stats['mapped_sender_uids']} "
+            f"已写入={sec_stats['updated']} "
+            f"无法补齐={sec_stats['unresolved']}"
+        )
+        grouped = {}
+        for row in candidates:
+            grouped.setdefault(str(row["conv_id"]), []).append(row)
+
+        print(
+            f"[*] 历史语音回填: 数据库筛选到 {len(candidates)} 条待处理语音，"
+            f"涉及 {len(grouped)} 个会话"
+        )
+        if not grouped:
+            return {"voices": 0, "cached": 0, "requested": 0,
+                    "succeeded": 0, "failed": 0, "skipped": 0}
+
+        await self.navigate_to_chat()
+        await asyncio.sleep(2)
+
+        # A local mapping is normally enough.  If it is not, ask the message
+        # API for only the sender identities still needed by this backfill.
+        # The lookup stops as soon as all target sender_uids are found and does
+        # not write any fetched messages into the database.
+        unresolved_by_conv = {}
+        for conv_id, conv_rows in grouped.items():
+            sender_uids = {
+                str(row["sender_uid"])
+                for row in conv_rows
+                if row["sender_uid"]
+                and not str(row.get("sender_sec_uid") or "").strip()
+            }
+            if sender_uids:
+                unresolved_by_conv[conv_id] = sender_uids
+
+        remote_short_ids = {}
+        remote_mapping = {}
+        for conv_id, sender_uids in unresolved_by_conv.items():
+            conv_rows = grouped[conv_id]
+            conv_name = str(conv_rows[0]["conversation_name"] or conv_id)
+            if conv_id.isdigit():
+                conv_short_id = conv_id
+            else:
+                conv_short_id = await self._acquire_short_id(conv_id, conv_name)
+            remote_short_ids[conv_id] = conv_short_id or ""
+            mapping, lookup_stats = await self._lookup_sender_sec_uids(
+                conv_id, conv_short_id or "", sender_uids
+            )
+            remote_mapping.update(mapping)
+            print(
+                "  [voice] sec_uid 定向补取: "
+                f"会话={conv_name} 目标发送者={lookup_stats['target_senders']} "
+                f"请求页数={lookup_stats['pages']} 命中={lookup_stats['matched']} "
+                f"未命中={lookup_stats['target_senders'] - lookup_stats['matched']}"
+            )
+
+        if remote_mapping:
+            candidates, remote_stats = backfill_sender_sec_uids(
+                self._db_conn, candidates, extra_mapping=remote_mapping
+            )
+            print(
+                "[voice] 远程 sec_uid 回填: "
+                f"匹配发送者={remote_stats['mapped_sender_uids']} "
+                f"已写入={remote_stats['updated']} "
+                f"无法补齐={remote_stats['unresolved']}"
+            )
+
+        # The rows may have been enriched by the remote lookup; regroup them
+        # before transcription so every request sees the updated sec_uid.
+        grouped = {}
+        for row in candidates:
+            grouped.setdefault(str(row["conv_id"]), []).append(row)
+
+        total = {"voices": 0, "cached": 0, "requested": 0,
+                 "succeeded": 0, "failed": 0, "skipped": 0}
+        for conv_id, conv_rows in grouped.items():
+            conv_name = str(conv_rows[0]["conversation_name"] or conv_id)
+            conv_short_id = remote_short_ids.get(conv_id)
+            if conv_short_id is None:
+                if conv_id.isdigit():
+                    conv_short_id = conv_id
+                else:
+                    conv_short_id = await self._acquire_short_id(conv_id, conv_name)
+            stats = await VoiceTranscriber(
+                self.page, self._db_conn
+            ).transcribe_rows(conv_rows, conv_short_id or "")
+            for key, value in stats.items():
+                total[key] += value
+            print(
+                f"  [voice] 回填会话完成: 总数={stats['voices']} "
+                f"请求={stats['requested']} 成功={stats['succeeded']} "
+                f"失败={stats['failed']} 跳过={stats['skipped']}"
+            )
+
+        print(
+            "[voice] 历史回填完成: "
+            f"总数={total['voices']} 请求={total['requested']} "
+            f"成功={total['succeeded']} 失败={total['failed']} "
+            f"跳过={total['skipped']}"
+        )
+        return total
 
     @staticmethod
     def _make_msg_id(conv_id, msg):
@@ -1900,9 +2215,10 @@ class WebChatScraper:
         return f"web_{msg_hash}"
 
     def _store_messages(self, messages, conv_id, batch_seq_start=0):
-        """Store a batch of messages to the database immediately. Returns count of newly inserted rows."""
+        """Store a batch and return its inserted row count and message IDs."""
         conn = self._db_conn
         newly_inserted = 0
+        inserted_message_ids = []
 
         for idx, msg in enumerate(messages):
             content = msg.get("content", "")
@@ -1961,6 +2277,7 @@ class WebChatScraper:
             )
             if cursor.rowcount > 0:
                 newly_inserted += 1
+                inserted_message_ids.append(msg_id)
             elif ref_msg:
                 # 已存在的消息：更新 ref_msg（如果新数据包含引用信息）
                 conn.execute(
@@ -1983,7 +2300,7 @@ class WebChatScraper:
                 pass
             self._commit_counter = 0
 
-        return newly_inserted
+        return newly_inserted, inserted_message_ids
 
     async def close(self):
         if self._db_conn:

@@ -51,33 +51,31 @@ def get_conversation(conv_id):
 
 def get_messages(conv_id, page_size=100, before_seq=None, after_seq=None):
     conn = get_db()
+    message_select = """SELECT m.*,
+                              vt.text_result AS voice_transcription,
+                              vt.status AS voice_transcription_status,
+                              vt.error AS voice_transcription_error
+                       FROM messages m
+                       LEFT JOIN voice_transcriptions vt ON vt.msg_id = m.msg_id
+                       WHERE m.conv_id = ?"""
 
     if before_seq:
         # 加载更早的消息（向上滚动时调用）
         rows = conn.execute(
-            """SELECT * FROM messages
-               WHERE conv_id = ? AND seq < ?
-               ORDER BY seq DESC
-               LIMIT ?""",
+            message_select + " AND m.seq < ? ORDER BY m.seq DESC LIMIT ?",
             (conv_id, before_seq, page_size),
         ).fetchall()
         rows = list(reversed(rows))
     elif after_seq is not None:
         # 从指定 seq 开始向后加载（跳到开头时调用，after_seq=0 即从头）
         rows = conn.execute(
-            """SELECT * FROM messages
-               WHERE conv_id = ? AND seq > ?
-               ORDER BY seq ASC
-               LIMIT ?""",
+            message_select + " AND m.seq > ? ORDER BY m.seq ASC LIMIT ?",
             (conv_id, after_seq, page_size),
         ).fetchall()
     else:
         # 初始加载：最新的100条
         rows = conn.execute(
-            """SELECT * FROM messages
-               WHERE conv_id = ?
-               ORDER BY seq DESC
-               LIMIT ?""",
+            message_select + " ORDER BY m.seq DESC LIMIT ?",
             (conv_id, page_size),
         ).fetchall()
         rows = list(reversed(rows))
@@ -107,22 +105,29 @@ def get_senders(conv_id):
 def search_messages(query, page=1, page_size=50):
     conn = get_db()
     offset = (page - 1) * page_size
+    pattern = f"%{query}%"
 
     rows = conn.execute(
         """SELECT m.*, c.name as conv_name,
-                  COALESCE(u.nickname, m.sender_name, '') as sender_display_name
+                  COALESCE(u.nickname, m.sender_name, '') as sender_display_name,
+                  vt.text_result AS voice_transcription,
+                  vt.status AS voice_transcription_status,
+                  vt.error AS voice_transcription_error
            FROM messages m
            JOIN conversations c ON m.conv_id = c.conv_id
            LEFT JOIN users u ON m.sender_uid = u.uid
-           WHERE m.content LIKE ?
+           LEFT JOIN voice_transcriptions vt ON vt.msg_id = m.msg_id
+           WHERE m.content LIKE ? OR vt.text_result LIKE ?
            ORDER BY m.seq DESC
            LIMIT ? OFFSET ?""",
-        (f"%{query}%", page_size, offset),
+        (pattern, pattern, page_size, offset),
     ).fetchall()
 
     total = conn.execute(
-        "SELECT COUNT(*) FROM messages WHERE content LIKE ?",
-        (f"%{query}%",),
+        """SELECT COUNT(*) FROM messages m
+           LEFT JOIN voice_transcriptions vt ON vt.msg_id = m.msg_id
+           WHERE m.content LIKE ? OR vt.text_result LIKE ?""",
+        (pattern, pattern),
     ).fetchone()[0]
 
     conn.close()
@@ -131,7 +136,16 @@ def search_messages(query, page=1, page_size=50):
 
 def get_message(msg_id):
     conn = get_db()
-    row = conn.execute("SELECT * FROM messages WHERE msg_id = ?", (msg_id,)).fetchone()
+    row = conn.execute(
+        """SELECT m.*,
+                  vt.text_result AS voice_transcription,
+                  vt.status AS voice_transcription_status,
+                  vt.error AS voice_transcription_error
+           FROM messages m
+           LEFT JOIN voice_transcriptions vt ON vt.msg_id = m.msg_id
+           WHERE m.msg_id = ?""",
+        (msg_id,),
+    ).fetchone()
     conn.close()
     return dict(row) if row else None
 
@@ -164,6 +178,11 @@ def get_stats():
 def delete_conversation_messages(conv_id):
     """Delete all messages for a conversation (keep the conversation row)."""
     conn = get_db()
+    conn.execute(
+        """DELETE FROM voice_transcriptions
+           WHERE msg_id IN (SELECT msg_id FROM messages WHERE conv_id = ?)""",
+        (conv_id,),
+    )
     cur = conn.execute("DELETE FROM messages WHERE conv_id = ?", (conv_id,))
     deleted = cur.rowcount
     conn.execute(
@@ -178,6 +197,11 @@ def delete_conversation_messages(conv_id):
 def delete_conversation(conv_id):
     """Delete a conversation and all its messages."""
     conn = get_db()
+    conn.execute(
+        """DELETE FROM voice_transcriptions
+           WHERE msg_id IN (SELECT msg_id FROM messages WHERE conv_id = ?)""",
+        (conv_id,),
+    )
     msg_cur = conn.execute("DELETE FROM messages WHERE conv_id = ?", (conv_id,))
     msg_deleted = msg_cur.rowcount
     conv_cur = conn.execute("DELETE FROM conversations WHERE conv_id = ?", (conv_id,))

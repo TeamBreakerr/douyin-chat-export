@@ -57,6 +57,7 @@ def _read_utf8_or_gbk(path: str) -> str:
 # ── Scrape job state ──
 _scrape_state = {
     "status": "idle",  # idle | running | completed | failed
+    "kind": "scrape",  # scrape | voice_backfill
     "started_at": None,
     "finished_at": None,
     "message": "",
@@ -117,6 +118,7 @@ _video_backfill_state = {
 }
 
 LOG_PATH = paths.SCRAPE_LOG
+VOICE_LOG_PATH = paths.VOICE_TRANSCRIPTION_LOG
 DISCOVER_LOG_PATH = paths.DISCOVER_LOG
 CONV_LIST_PATH = paths.CONVERSATIONS_LIST
 
@@ -147,6 +149,10 @@ class ScrapeRequest(BaseModel):
     incremental: bool = True
     filter: str = ""
     conversations: list[str] | None = None  # selected nicknames; overrides filter
+
+
+class VoiceBackfillRequest(BaseModel):
+    conversations: list[str] | None = None  # selected nicknames; empty = all DB candidates
 
 
 class ExportRequest(BaseModel):
@@ -471,6 +477,7 @@ async def panel_status():
         "custom_filters": cfg.get("custom_filters", []),
         "scrape": {
             "status": _scrape_state["status"],
+            "kind": _scrape_state.get("kind", "scrape"),
             "started_at": _scrape_state["started_at"],
             "finished_at": _scrape_state["finished_at"],
             "message": _scrape_state["message"],
@@ -512,6 +519,7 @@ async def start_scrape(req: ScrapeRequest):
         cmd.append("--download-images")
 
     _scrape_state["status"] = "running"
+    _scrape_state["kind"] = "scrape"
     _scrape_state["started_at"] = time.time()
     _scrape_state["finished_at"] = None
     _scrape_state["message"] = f"{'增量' if req.incremental else '全量'}采集"
@@ -530,14 +538,39 @@ async def start_scrape(req: ScrapeRequest):
     return {"status": "started", "message": _scrape_state["message"]}
 
 
-async def _run_scrape(cmd):
+@control_router.post("/api/voice-transcriptions/backfill")
+async def start_voice_backfill(req: VoiceBackfillRequest | None = None):
+    """Start a local-DB voice backfill without fetching chat history again."""
+    if _scrape_state["status"] == "running":
+        return JSONResponse({"error": "Scrape already running"}, status_code=409)
+
+    conversations = list((req.conversations if req else None) or [])
+    cmd = [sys.executable, "-u", "extract.py", "--transcribe-voices"]
+    if conversations:
+        cmd.extend(["--filter", ",".join(conversations)])
+
+    _scrape_state["status"] = "running"
+    _scrape_state["kind"] = "voice_backfill"
+    _scrape_state["started_at"] = time.time()
+    _scrape_state["finished_at"] = None
+    _scrape_state["message"] = "补充历史语音转写"
+    if conversations:
+        _scrape_state["message"] += f" ({len(conversations)} 个会话)"
+    asyncio.create_task(
+        _run_scrape(cmd, log_path=VOICE_LOG_PATH, job_kind="voice_backfill")
+    )
+    return {"status": "started", "message": _scrape_state["message"]}
+
+
+async def _run_scrape(cmd, *, log_path=None, job_kind="scrape"):
     # Reset here (not in start_scrape) so BOTH the manual and cron paths clear a
     # prior manual-stop flag; otherwise a scheduled scrape after a manual Stop
     # would be mislabeled '已停止' and its failure notification suppressed.
     _scrape_state["stopped"] = False
     try:
-        os.makedirs(os.path.dirname(LOG_PATH), exist_ok=True)
-        with open(LOG_PATH, "w", encoding="utf-8", newline="") as log_file:
+        log_path = log_path or LOG_PATH
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "w", encoding="utf-8", newline="") as log_file:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=log_file,
@@ -555,20 +588,25 @@ async def _run_scrape(cmd):
             _scrape_state["message"] = "已停止"
         elif proc.returncode == 0:
             _scrape_state["status"] = "completed"
-            _scrape_state["message"] = "采集完成"
+            _scrape_state["message"] = (
+                "语音转写补充完成" if job_kind == "voice_backfill" else "采集完成"
+            )
         else:
             _scrape_state["status"] = "failed"
-            _scrape_state["message"] = f"采集失败 (exit code {proc.returncode})"
+            label = "语音转写补充" if job_kind == "voice_backfill" else "采集"
+            _scrape_state["message"] = f"{label}失败 (exit code {proc.returncode})"
     except Exception as e:
         _scrape_state["status"] = "failed"
-        _scrape_state["message"] = f"采集错误: {e}"
+        label = "语音转写补充" if job_kind == "voice_backfill" else "采集"
+        _scrape_state["message"] = f"{label}错误: {e}"
     finally:
         _scrape_state["finished_at"] = time.time()
         _scrape_state["process"] = None
         if _scrape_state["status"] == "failed" and not _scrape_state.get("stopped"):
+            label = "语音转写补充" if job_kind == "voice_backfill" else "采集"
             asyncio.create_task(_notify_on_failure(
-                "抖音聊天导出 · 采集失败",
-                _build_failure_desp(_scrape_state["message"], LOG_PATH),
+                f"抖音聊天导出 · {label}失败",
+                _build_failure_desp(_scrape_state["message"], log_path),
             ))
 
 
@@ -578,6 +616,18 @@ async def scrape_log(lines: int = 50):
         return {"log": ""}
     try:
         all_lines = _read_utf8_or_gbk(LOG_PATH).splitlines(keepends=True)
+        tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
+        return {"log": "".join(tail)}
+    except Exception:
+        return {"log": ""}
+
+
+@control_router.get("/api/voice-transcriptions/log")
+async def voice_transcription_log(lines: int = 80):
+    if not os.path.exists(VOICE_LOG_PATH):
+        return {"log": ""}
+    try:
+        all_lines = _read_utf8_or_gbk(VOICE_LOG_PATH).splitlines(keepends=True)
         tail = all_lines[-lines:] if len(all_lines) > lines else all_lines
         return {"log": "".join(tail)}
     except Exception:
@@ -875,6 +925,7 @@ async def _cron_loop(parsed: list, incremental: bool):
                 if filters:
                     cmd.extend(["--filter", ",".join(filters)])
                 _scrape_state["status"] = "running"
+                _scrape_state["kind"] = "scrape"
                 _scrape_state["started_at"] = time.time()
                 _scrape_state["finished_at"] = None
                 filter_desc = f" (过滤: {','.join(filters[:5])}{'...' if len(filters) > 5 else ''})" if filters else " (全部会话)"
@@ -1106,12 +1157,10 @@ def _install_database(staged_path: str) -> str | None:
 
 def _do_export(fmt: str, filter_name: str, conversations: list | None):
     try:
-        from extractor.exporter import ChatLabExporter
-        import re
+        from extractor.exporter import ChatLabExporter, build_export_filename
         import zipfile
 
-        ext = ".json" if fmt == "json" else ".jsonl"
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
+        data_dir = paths.DATA_DIR
 
         if fmt == "database":
             output_path = _do_database_export()
@@ -1131,18 +1180,15 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
 
         if len(targets) <= 1:
             # Single file
-            output_path = os.path.join(data_dir, f"export{ext}")
-            # Remove stale file so a "conv not found" early-return doesn't look like success
-            if os.path.exists(output_path):
-                try:
-                    os.remove(output_path)
-                except Exception:
-                    pass
-            exporter = ChatLabExporter(conv_name=targets[0] or None, output_format=fmt)
-            exporter.export(output_path)
-            if not os.path.exists(output_path):
+            exporter = ChatLabExporter(
+                conv_name=targets[0] or None,
+                output_format=fmt,
+                output_dir=data_dir,
+            )
+            output_path = exporter.export()
+            if not output_path or not os.path.exists(output_path):
                 raise RuntimeError(f"未找到会话: {targets[0] or '(any)'}")
-            _export_state["file_path"] = f"export{ext}"
+            _export_state["file_path"] = os.path.basename(output_path)
             size_mb = os.path.getsize(output_path) / (1024 * 1024)
             _export_state["message"] = f"导出完成 ({size_mb:.1f} MB)"
         else:
@@ -1157,9 +1203,18 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
                     pass
 
             produced = []
+            used_filenames = set()
+            exported_at = int(time.time())
             for name in targets:
-                safe = re.sub(r"[^\w\u4e00-\u9fff.-]+", "_", name)[:80] or "conv"
-                path = os.path.join(tmp_dir, f"{safe}{ext}")
+                filename = build_export_filename(name, fmt, exported_at)
+                collision_index = 2
+                while filename in used_filenames:
+                    filename = build_export_filename(
+                        name, fmt, exported_at, collision_index=collision_index
+                    )
+                    collision_index += 1
+                used_filenames.add(filename)
+                path = os.path.join(tmp_dir, filename)
                 try:
                     ChatLabExporter(conv_name=name, output_format=fmt).export(path)
                     if os.path.exists(path):
@@ -1189,9 +1244,7 @@ def _do_export(fmt: str, filter_name: str, conversations: list | None):
 async def download_export():
     if not _export_state["file_path"]:
         return JSONResponse({"error": "No export file"}, status_code=404)
-    path = os.path.join(
-        os.path.dirname(os.path.dirname(__file__)), "data", _export_state["file_path"]
-    )
+    path = os.path.join(paths.DATA_DIR, _export_state["file_path"])
     if not os.path.exists(path):
         return JSONResponse({"error": "File not found"}, status_code=404)
     return FileResponse(path, filename=_export_state["file_path"])

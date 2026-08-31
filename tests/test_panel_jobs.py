@@ -72,6 +72,32 @@ def test_backfill_start_conflict(monkeypatch):
     assert getattr(res, "status_code", None) == 409
 
 
+def test_voice_backfill_start_uses_scrape_job_and_selected_conversations(monkeypatch):
+    created = []
+    monkeypatch.setattr(
+        cp.asyncio, "create_task",
+        lambda coro: created.append(coro) or coro.close(),
+    )
+    monkeypatch.setitem(cp._scrape_state, "status", "idle")
+
+    res = asyncio.run(cp.start_voice_backfill(
+        cp.VoiceBackfillRequest(conversations=["语音会话"])
+    ))
+
+    assert res == {
+        "status": "started",
+        "message": "补充历史语音转写 (1 个会话)",
+    }
+    assert cp._scrape_state["status"] == "running"
+    assert len(created) == 1
+
+
+def test_voice_backfill_start_conflict(monkeypatch):
+    monkeypatch.setitem(cp._scrape_state, "status", "running")
+    res = asyncio.run(cp.start_voice_backfill())
+    assert getattr(res, "status_code", None) == 409
+
+
 def test_windows_subprocess_output_is_forced_to_utf8(monkeypatch):
     monkeypatch.setenv("PYTHONIOENCODING", "gbk")
     env = cp._utf8_subprocess_env()

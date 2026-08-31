@@ -6,6 +6,8 @@
   python3 export.py --filter "会话名称"           # 导出指定会话
   python3 export.py --filter "会话名称" --format json  # 导出为 JSON
   python3 export.py --output data/my_export.jsonl      # 指定输出路径
+
+未指定 --output 时，文件名自动使用“会话昵称_YYYYMMDDHHMMSS_export”格式。
 """
 import os
 import sys
@@ -37,9 +39,6 @@ def main():
             return
         else:
             i += 1
-
-    ext = ".json" if output_format == "json" else ".jsonl"
-    output_path = output_path or os.path.join("data", f"export{ext}")
 
     exporter = ChatLabExporter(conv_name=name_filter, output_format=output_format)
     exporter.export(output_path)

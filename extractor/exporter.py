@@ -8,6 +8,7 @@ import re
 import time
 import urllib.parse
 
+from common import paths
 from extractor.models import get_db
 
 # DB msg_type → ChatLab message type
@@ -19,6 +20,60 @@ CHATLAB_TYPE_MAP = {
     5: 1,   # video → IMAGE (只有 poster，没有真视频流)
     0: 99,  # other → OTHER
 }
+
+
+_INVALID_FILENAME_CHARS_RE = re.compile(r'[<>:"/\\|?*\x00-\x1f]+')
+_WINDOWS_RESERVED_NAMES = {
+    "CON",
+    "PRN",
+    "AUX",
+    "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
+_MAX_FILENAME_BYTES = 255
+
+
+def _safe_filename_component(
+    value: str | None,
+    fallback: str = "conversation",
+    max_bytes: int = _MAX_FILENAME_BYTES,
+) -> str:
+    """Convert a conversation nickname into a portable filename component."""
+    component = str(value or "").strip()
+    component = _INVALID_FILENAME_CHARS_RE.sub("_", component)
+    component = re.sub(r"\s+", "_", component)
+    component = component.strip(" ._") or fallback
+    if component.upper() in _WINDOWS_RESERVED_NAMES:
+        component = f"_{component}"
+    encoded = component.encode("utf-8")
+    if len(encoded) > max_bytes:
+        component = encoded[:max_bytes].decode("utf-8", errors="ignore")
+    return component.rstrip(" ._") or fallback
+
+
+def build_export_filename(
+    username: str | None,
+    output_format: str = "jsonl",
+    timestamp: int | float | None = None,
+    collision_index: int | None = None,
+) -> str:
+    """Build a recognizable, filesystem-safe ChatLab export filename.
+
+    The timestamp is the export time (local time) and includes seconds so
+    repeated exports made in different seconds do not all become browser
+    ``(1)``/``(2)`` downloads.
+    """
+    export_time = time.localtime(time.time() if timestamp is None else timestamp)
+    stamp = time.strftime("%Y%m%d%H%M%S", export_time)
+    extension = ".json" if output_format == "json" else ".jsonl"
+    collision_suffix = f"_{collision_index}" if collision_index else ""
+    suffix = f"{collision_suffix}_{stamp}_export{extension}"
+    component = _safe_filename_component(
+        username,
+        max_bytes=_MAX_FILENAME_BYTES - len(suffix.encode("utf-8")),
+    )
+    return f"{component}{suffix}"
 
 
 _STICKER_HEX_RE = re.compile(r"-ts-([0-9a-fA-F]{4,})(?:\.[a-zA-Z0-9]{1,5})?$")
@@ -209,6 +264,16 @@ def _get_content_json(msg) -> dict | None:
     return None
 
 
+def _message_field(msg, key: str, default=None):
+    """Read a field from either sqlite3.Row or a plain test dictionary."""
+    if isinstance(msg, dict):
+        return msg.get(key, default)
+    try:
+        return msg[key]
+    except (KeyError, IndexError, TypeError):
+        return default
+
+
 def _resolve_message(msg, cj: dict | None, media_dir: str) -> tuple:
     """Decide the ChatLab content + type for one DB message.
 
@@ -225,11 +290,38 @@ def _resolve_message(msg, cj: dict | None, media_dir: str) -> tuple:
     # 语音消息：msg_type=0 但有 resource_url + duration
     # 不再嵌 base64 / CDN URL —— 对 LLM 无意义且每条几百 KB；用纯文字标签即可。
     is_voice = False
-    if cj and cj.get("resource_url") and cj.get("duration"):
+    voice_resource = cj.get("resource_url") if cj else None
+    voice_duration = cj.get("duration") if cj else None
+    if voice_duration in (None, "") and isinstance(voice_resource, dict):
+        voice_duration = voice_resource.get("duration")
+    video_payload = cj.get("video") if isinstance(cj, dict) else None
+    has_video_payload = (
+        isinstance(video_payload, dict) and bool(video_payload.get("vid"))
+    )
+    is_image_payload = bool(
+        cj and str(cj.get("aweType")) in {"2702", "2703", "2704"}
+    )
+    if (
+        voice_resource is not None
+        and voice_duration not in (None, "")
+        and not has_video_payload
+        and not is_image_payload
+    ):
         is_voice = True
         chatlab_type = 0  # TEXT
-        dur_sec = round(cj["duration"] / 1000)
-        content = f"[语音 {dur_sec}秒]" if dur_sec else "[语音]"
+        try:
+            dur_sec = round(float(voice_duration) / 1000)
+        except (TypeError, ValueError):
+            dur_sec = 0
+        voice_label = f"[语音 {dur_sec}秒]" if dur_sec else "[语音]"
+        transcription = _message_field(msg, "voice_transcription", "")
+        transcription_status = _message_field(
+            msg, "voice_transcription_status", None
+        )
+        if transcription_status not in (None, "", "success"):
+            transcription = ""
+        transcription = transcription.strip() if isinstance(transcription, str) else ""
+        content = f"{voice_label} {transcription}" if transcription else voice_label
         stats["voice"] = 1
 
     # 视频消息：msg_type=5 (新分类) 或 cj.video.vid 兜底（老数据）
@@ -315,11 +407,19 @@ def _build_reply_to(ref_msg_raw) -> dict | None:
 
 
 class ChatLabExporter:
-    def __init__(self, conv_name: str = None, output_format: str = "jsonl"):
+    def __init__(
+        self,
+        conv_name: str = None,
+        output_format: str = "jsonl",
+        output_dir: str | os.PathLike[str] | None = None,
+    ):
         self.conv_name = conv_name
         self.output_format = output_format  # "json" or "jsonl"
+        self.output_dir = (
+            paths.DATA_DIR if output_dir is None else os.fspath(output_dir)
+        )
 
-    def export(self, output_path: str):
+    def export(self, output_path: str | None = None) -> str | None:
         conn = get_db()
 
         # Detect owner
@@ -346,9 +446,24 @@ class ChatLabExporter:
         conv_name = row["name"]
         print(f"[*] 导出会话: {conv_name} (ID: {conv_id})")
 
+        exported_at = int(time.time())
+        if output_path is None:
+            output_path = os.path.join(
+                self.output_dir,
+                build_export_filename(conv_name or conv_id, self.output_format, exported_at),
+            )
+        else:
+            output_path = os.fspath(output_path)
+
         # Load messages ordered by seq
         messages = conn.execute(
-            "SELECT * FROM messages WHERE conv_id = ? ORDER BY seq ASC",
+            """SELECT m.*,
+                      vt.text_result AS voice_transcription,
+                      vt.status AS voice_transcription_status,
+                      vt.error AS voice_transcription_error
+               FROM messages m
+               LEFT JOIN voice_transcriptions vt ON vt.msg_id = m.msg_id
+               WHERE m.conv_id = ? ORDER BY m.seq ASC""",
             (conv_id,),
         ).fetchall()
 
@@ -378,7 +493,7 @@ class ChatLabExporter:
         header = {
             "chatlab": {
                 "version": "0.0.2",
-                "exportedAt": int(time.time()),
+                "exportedAt": exported_at,
                 "generator": "douyin-chat-export",
             },
             "meta": {
@@ -483,3 +598,4 @@ class ChatLabExporter:
             print(f"  引用/回复: {ref_count}")
         size_mb = os.path.getsize(output_path) / (1024 * 1024)
         print(f"  文件大小: {size_mb:.1f} MB")
+        return output_path

@@ -28,6 +28,7 @@
  "GET /panel/api/password/status",
  "GET /panel/api/scrape/log",
  "GET /panel/api/status",
+ "GET /panel/api/voice-transcriptions/log",
  "GET /{full_path}",
  "POST /api/auth/login",
  "POST /api/conversations/{conv_id}/delete",
@@ -51,5 +52,6 @@
  "POST /panel/api/password",
  "POST /panel/api/schedule",
  "POST /panel/api/scrape",
- "POST /panel/api/scrape/stop"
+ "POST /panel/api/scrape/stop",
+ "POST /panel/api/voice-transcriptions/backfill"
 ]

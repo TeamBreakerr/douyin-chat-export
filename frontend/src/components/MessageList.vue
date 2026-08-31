@@ -196,9 +196,38 @@
                 </div>
               </div>
               <!-- 语音消息 -->
-              <div v-else-if="isVoiceMsg(msg)" class="msg-voice">
-                <audio controls preload="none" :src="getVoiceUrl(msg)"></audio>
-                <span class="msg-voice-dur">{{ getVoiceDuration(msg) }}″</span>
+              <div v-else-if="isVoiceMsg(msg)" class="msg-bubble msg-voice-bubble">
+                <div class="msg-voice-player" :class="{ playing: isVoicePlaying(msg) }">
+                  <button
+                    type="button"
+                    class="msg-voice-play"
+                    :class="{ playing: isVoicePlaying(msg) }"
+                    :disabled="!getVoiceUrl(msg)"
+                    :aria-label="isVoicePlaying(msg) ? '暂停语音' : '播放语音'"
+                    @click.stop="toggleVoice(msg)"
+                  >
+                    <svg v-if="!isVoicePlaying(msg)" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M8 5.2v13.6a1 1 0 0 0 1.55.83l9.25-6.8a1 1 0 0 0 0-1.66l-9.25-6.8A1 1 0 0 0 8 5.2Z" />
+                    </svg>
+                    <svg v-else viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M7 5.5h3.4v13H7v-13Zm6.6 0H17v13h-3.4v-13Z" />
+                    </svg>
+                  </button>
+                  <span class="msg-voice-wave" aria-hidden="true">
+                    <i v-for="n in 13" :key="n"></i>
+                  </span>
+                  <span class="msg-voice-dur">{{ getVoiceDuration(msg) }}″</span>
+                  <audio
+                    :ref="el => setVoiceAudioRef(msg.msg_id, el)"
+                    preload="none"
+                    :src="getVoiceUrl(msg)"
+                    @ended="onVoiceEnded(msg.msg_id)"
+                  ></audio>
+                </div>
+                <div v-if="msg.voice_transcription" class="msg-voice-divider"></div>
+                <div v-if="msg.voice_transcription" class="msg-voice-transcript">
+                  <span v-html="highlightText(msg.voice_transcription)"></span>
+                </div>
               </div>
               <!-- 评论引用视频（aweType=700，文本+关联视频） -->
               <div v-else-if="isVideoComment(msg)" class="msg-share-card" @click="openShare(msg)">
@@ -265,6 +294,43 @@ const showPicker = ref(false)
 
 // 用户信息缓存 { uid: { nickname, avatar_url, unique_id } }
 const userCache = reactive({})
+
+// Keep native audio elements behind the compact voice bubble and allow only
+// one voice message to play at a time.
+const voiceAudioRefs = new Map()
+const playingVoiceId = ref(null)
+
+function setVoiceAudioRef(msgId, el) {
+  if (el) voiceAudioRefs.set(msgId, el)
+  else voiceAudioRefs.delete(msgId)
+}
+
+function isVoicePlaying(msg) {
+  return playingVoiceId.value === msg.msg_id
+}
+
+async function toggleVoice(msg) {
+  const audio = voiceAudioRefs.get(msg.msg_id)
+  if (!audio || !getVoiceUrl(msg)) return
+  if (!audio.paused) {
+    audio.pause()
+    playingVoiceId.value = null
+    return
+  }
+  for (const [msgId, other] of voiceAudioRefs) {
+    if (msgId !== msg.msg_id && !other.paused) other.pause()
+  }
+  try {
+    await audio.play()
+    playingVoiceId.value = msg.msg_id
+  } catch {
+    playingVoiceId.value = null
+  }
+}
+
+function onVoiceEnded(msgId) {
+  if (playingVoiceId.value === msgId) playingVoiceId.value = null
+}
 
 // content_json 解析缓存
 // 系统消息引用的分享视频缓存 { msg_id: { title, cover, itemId } }
@@ -377,7 +443,7 @@ function selectMsgContent(e) {
   if (!body) return
   // 优先精确选中消息内容容器（避开 sender / time）
   const content = body.querySelector(
-    ':scope > .msg-bubble, :scope > .msg-share-card, :scope > .msg-share-comment, :scope > .msg-media, :scope > .msg-voice'
+  ':scope > .msg-bubble, :scope > .msg-share-card, :scope > .msg-share-comment, :scope > .msg-media'
   )
   const target = content || body
   const range = document.createRange()
@@ -601,6 +667,9 @@ onUnmounted(() => {
   if (listRef.value) {
     listRef.value.removeEventListener('scroll', onListScroll)
   }
+  for (const audio of voiceAudioRefs.values()) audio.pause()
+  voiceAudioRefs.clear()
+  playingVoiceId.value = null
 })
 
 function formatTime(ts) {
@@ -1098,21 +1167,129 @@ watch(() => props.jumpToSeq, async (seq) => {
   opacity: 0.85;
 }
 
-/* 语音消息 */
-.msg-voice {
+/* 语音消息：沿用普通消息气泡，并在播放器与转写之间分隔 */
+.msg-voice-bubble {
+  min-width: 176px;
+  max-width: 360px;
+  padding: 8px 10px 9px;
+}
+.msg-voice-player {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 0;
+  min-height: 32px;
 }
-.msg-voice audio {
-  height: 36px;
-  max-width: 260px;
+.msg-voice-play {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  background: var(--text-primary);
+  color: var(--bg-primary);
+  box-shadow: none;
+  cursor: pointer;
+  flex: 0 0 auto;
+  transition: transform 0.15s, opacity 0.15s;
+}
+.msg-voice-play svg { width: 16px; height: 16px; fill: currentColor; }
+.msg-voice-play:hover:not(:disabled),
+.msg-voice-play.playing {
+  transform: scale(1.03);
+  opacity: 0.78;
+}
+.msg-item.msg-self .msg-voice-play {
+  background: color-mix(in srgb, var(--text-on-self) 94%, transparent);
+  color: var(--accent);
+}
+.msg-item.msg-self .msg-voice-play:hover:not(:disabled),
+.msg-item.msg-self .msg-voice-play.playing {
+  opacity: 0.8;
+}
+.msg-voice-play:disabled {
+  opacity: 0.45;
+  cursor: default;
+  box-shadow: none;
+}
+.msg-voice-play:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.msg-voice-wave {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  height: 22px;
+  flex: 0 0 auto;
+}
+.msg-voice-wave i {
+  display: block;
+  width: 2.5px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--text-primary);
+  opacity: 0.88;
+  transform-origin: center;
+  transition: opacity 0.2s, background 0.2s;
+}
+.msg-voice-wave i:nth-child(1) { height: 8px; }
+.msg-voice-wave i:nth-child(2) { height: 14px; }
+.msg-voice-wave i:nth-child(3) { height: 11px; }
+.msg-voice-wave i:nth-child(4) { height: 16px; }
+.msg-voice-wave i:nth-child(5) { height: 10px; }
+.msg-voice-wave i:nth-child(6) { height: 18px; }
+.msg-voice-wave i:nth-child(7) { height: 12px; }
+.msg-voice-wave i:nth-child(8) { height: 21px; }
+.msg-voice-wave i:nth-child(9) { height: 14px; }
+.msg-voice-wave i:nth-child(10) { height: 9px; }
+.msg-voice-wave i:nth-child(11) { height: 17px; }
+.msg-voice-wave i:nth-child(12) { height: 12px; }
+.msg-voice-wave i:nth-child(13) { height: 19px; }
+.msg-item.msg-self .msg-voice-wave i {
+  background: color-mix(in srgb, var(--text-on-self) 90%, transparent);
+  opacity: 0.9;
+}
+@keyframes voice-wave-pulse {
+  0%, 100% { transform: scaleY(0.58); opacity: 0.58; }
+  50% { transform: scaleY(1); opacity: 1; }
+}
+.msg-voice-player.playing .msg-voice-wave i {
+  animation: voice-wave-pulse 0.9s ease-in-out infinite alternate;
+}
+.msg-voice-player.playing .msg-voice-wave i:nth-child(2n) { animation-delay: -0.25s; }
+.msg-voice-player.playing .msg-voice-wave i:nth-child(3n) { animation-delay: -0.5s; }
+@media (prefers-reduced-motion: reduce) {
+  .msg-voice-player.playing .msg-voice-wave i { animation: none; }
+}
+.msg-voice-bubble audio {
+  display: none;
 }
 .msg-voice-dur {
+  margin-left: 4px;
   font-size: 12px;
+  font-weight: 500;
   color: var(--text-muted);
   white-space: nowrap;
+  text-align: right;
+}
+.msg-item.msg-self .msg-voice-dur {
+  color: color-mix(in srgb, var(--text-on-self) 76%, transparent);
+}
+.msg-voice-divider {
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+  margin: 8px 0 7px;
+}
+.msg-item.msg-self .msg-voice-divider {
+  border-top-color: color-mix(in srgb, var(--text-on-self) 25%, transparent);
+}
+.msg-voice-transcript {
+  color: inherit;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 /* 表情/图片 */

@@ -98,7 +98,7 @@ function navigateToMessage(item) {
     conv_id: item.conv_id,
     name: item.conv_name || '未知',
   }
-  searchHighlight.value = item.content?.substring(0, 20) || ''
+  searchHighlight.value = (item.voice_transcription || item.content)?.substring(0, 20) || ''
   jumpToSeq.value = item.seq || null
 }
 </script>
