@@ -1,0 +1,30 @@
+name: Promote Docker image
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_tag:
+        description: Existing GHCR tag to promote to latest
+        required: true
+        type: string
+
+jobs:
+  promote:
+    name: Promote ${{ inputs.source_tag }} to latest
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Move latest tag
+        env:
+          SOURCE_IMAGE: ghcr.io/teambreakerr/douyin-chat-export:${{ inputs.source_tag }}
+          TARGET_IMAGE: ghcr.io/teambreakerr/douyin-chat-export:latest
+        run: docker buildx imagetools create --tag "$TARGET_IMAGE" "$SOURCE_IMAGE"
+      - name: Inspect latest
+        run: docker buildx imagetools inspect ghcr.io/teambreakerr/douyin-chat-export:latest
