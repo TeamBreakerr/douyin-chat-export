@@ -219,7 +219,7 @@ function preview(item) {
 function thumbnail(item) { return isVideo(item) ? getVideoPoster(item) : getImageSrc(item) }
 function highlight(text) { return highlightText(text, query.value.trim()) }
 function formatTime(ts) {
-  return ts ? new Date(ts * 1000).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : ''
+  return ts ? new Date(ts * 1000).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' }) : ''
 }
 </script>
 

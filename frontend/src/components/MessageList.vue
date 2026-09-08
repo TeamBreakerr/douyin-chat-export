@@ -768,7 +768,7 @@ function formatTime(ts) {
   const d = new Date(ts * 1000)
   const now = new Date()
   const isToday = d.toDateString() === now.toDateString()
-  const time = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })
+  const time = d.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   if (isToday) return time
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' }) + ' ' + time
 }
