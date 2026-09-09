@@ -26,6 +26,11 @@ from playwright.async_api import async_playwright
 from common import paths
 from common.tls import client_context
 from extractor.forwarded import backfill_uploaded_forwards
+from extractor.message_types import (
+    is_merged_forward_payload,
+    is_video_note_payload,
+    message_type_code,
+)
 from extractor.models import (
     init_db, get_db, upsert_user, upsert_conversation, update_conversation_stats,
 )
@@ -1856,6 +1861,19 @@ class WebChatScraper:
                         except (TypeError, ValueError):
                             dur_sec = 0
                         text = text or (f"[语音 {dur_sec}秒]" if dur_sec else "[语音]")
+                    elif is_video_note_payload(cj):
+                        # Video notes also use aweType=0, so classify them before
+                        # the generic text branch. A poster is optional metadata.
+                        msg_type = "video"
+                        try:
+                            dur_sec = round(float(cj.get("duration") or 0))
+                        except (TypeError, ValueError):
+                            dur_sec = 0
+                        text = f"[视频 {dur_sec}秒]" if dur_sec else "[视频]"
+                        poster = cj.get("poster")
+                        urls = poster.get("origin_url_list") if isinstance(poster, dict) else []
+                        if urls and isinstance(urls[0], str):
+                            image_src = urls[0]
                     elif awe_type in (500, 501, 507, 508, 510, 514, 516):
                         # 表情包/贴纸
                         msg_type = "emoji"
@@ -1879,6 +1897,9 @@ class WebChatScraper:
                             if ul and isinstance(ul[0], str):
                                 image_src = ul[0]
                                 break
+                    elif is_merged_forward_payload(cj):
+                        msg_type = "merged_forward"
+                        text = cj.get("title") or "[聊天记录]"
                     elif awe_type == 700 or awe_type == 0:
                         msg_type = "text"
                     elif awe_type == 701 or awe_type == 703:
@@ -1911,18 +1932,6 @@ class WebChatScraper:
                     elif awe_type >= 100000:
                         msg_type = "other"
                         text = text or cj.get("push_detail") or "[系统消息]"
-                    elif cj.get("video", {}).get("vid") and cj.get("poster", {}).get("origin_url_list"):
-                        # 视频消息：awe_type=0 的视频走单独路径，cj.video.vid + cj.poster
-                        # 真正的视频流要 vid → 加密 URL 反查（待办），目前只下载 poster 封面图
-                        msg_type = "video"
-                        try:
-                            dur_sec = round(float(cj.get("duration") or 0))
-                        except (TypeError, ValueError):
-                            dur_sec = 0
-                        text = f"[视频 {dur_sec}秒]" if dur_sec else "[视频]"
-                        urls = cj.get("poster", {}).get("origin_url_list") or []
-                        if urls and isinstance(urls[0], str):
-                            image_src = urls[0]
                     elif text:
                         msg_type = "text"
                     else:
@@ -2263,8 +2272,7 @@ class WebChatScraper:
                     (sender_name or "unknown").encode()
                 ).hexdigest()[:12]
 
-            msg_type_map = {"text": 1, "emoji": 2, "image": 3, "share": 4, "other": 0, "video": 5}
-            msg_type = msg_type_map.get(msg.get("msg_type", "text"), 0)
+            msg_type = message_type_code(msg.get("msg_type", "text"))
 
             # 图片/表情/分享/视频 都记录 media_url (ensure it's a string)
             raw_media = msg.get("image_src") if msg.get("msg_type") in ("image", "emoji", "share", "video") else None
