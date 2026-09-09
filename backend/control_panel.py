@@ -1020,6 +1020,22 @@ async def import_database(request: Request):
             pass
 
 
+@control_router.get("/api/database/cleanup/message-types")
+async def preview_message_type_cleanup():
+    """Preview legacy rows that can be safely reclassified."""
+    return database.preview_message_type_cleanup()
+
+
+@control_router.post("/api/database/cleanup/message-types")
+async def cleanup_message_types():
+    """Manually normalize video-note and merged-forward rows."""
+    conflict = _database_job_conflict()
+    if conflict:
+        return JSONResponse({"error": conflict}, status_code=409)
+    with _DATABASE_FILE_LOCK:
+        return database.cleanup_message_types()
+
+
 def _database_job_conflict() -> str | None:
     """Return a user-facing reason why replacing the DB is unsafe now."""
     if _scrape_state["status"] == "running":

@@ -3,8 +3,11 @@
 The connection factory and schema live in `common.db`; the reader uses
 `connect()` with foreign keys OFF (its two-step delete relies on no cascade).
 """
+import json
+
 from common.db import connect
 from common.paths import DB_PATH  # re-exported for backward compatibility
+from extractor.message_types import is_merged_forward_payload, is_video_note_payload
 
 
 def get_db():
@@ -283,6 +286,104 @@ def get_stats():
     }
     conn.close()
     return stats
+
+
+def _preserved_content_json(row):
+    """Read the original content payload without modifying raw_data."""
+    try:
+        raw = json.loads(row["raw_data"] or "{}")
+    except (TypeError, ValueError):
+        raw = {}
+    value = raw.get("content_json") if isinstance(raw, dict) else None
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except (TypeError, ValueError):
+            value = None
+    return value if isinstance(value, dict) else {}
+
+
+def _video_note_content(payload):
+    try:
+        duration = round(float(payload.get("duration") or 0))
+    except (TypeError, ValueError):
+        duration = 0
+    return f"[视频 {duration}秒]" if duration else "[视频]"
+
+
+def _merged_forward_content(payload):
+    return payload.get("title") or "[聊天记录]"
+
+
+def _message_type_cleanup_plan():
+    """Return recognized historical rows and their normalized values."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            """SELECT msg_id, content, msg_type, raw_data
+               FROM messages
+               WHERE (raw_data LIKE '%video%' AND raw_data LIKE '%vid%')
+                  OR raw_data LIKE '%13600%'
+                  OR raw_data LIKE '%list_content%'
+                  OR raw_data LIKE '%msg_ids%'"""
+        ).fetchall()
+    finally:
+        conn.close()
+
+    plan = {"video_notes": [], "merged_forwards": []}
+    for row in rows:
+        payload = _preserved_content_json(row)
+        if is_video_note_payload(payload):
+            plan["video_notes"].append(
+                (row["msg_id"], 5, _video_note_content(payload), row["msg_type"], row["content"])
+            )
+        elif is_merged_forward_payload(payload):
+            plan["merged_forwards"].append(
+                (row["msg_id"], 6, _merged_forward_content(payload), row["msg_type"], row["content"])
+            )
+    return plan
+
+
+def preview_message_type_cleanup():
+    """Preview the idempotent video/merged-forward normalization."""
+    result = {}
+    for key, rows in _message_type_cleanup_plan().items():
+        need_update = sum(
+            current_type != wanted_type or current_content != wanted_content
+            for _, wanted_type, wanted_content, current_type, current_content in rows
+        )
+        result[key] = {
+            "total": len(rows),
+            "need_update": need_update,
+            "already_clean": len(rows) - need_update,
+        }
+    return result
+
+
+def cleanup_message_types():
+    """Normalize known rows while preserving their original raw_data exactly."""
+    plan = _message_type_cleanup_plan()
+    result = {}
+    conn = get_db()
+    try:
+        for key, rows in plan.items():
+            updates = [
+                (wanted_type, wanted_content, msg_id)
+                for msg_id, wanted_type, wanted_content, current_type, current_content in rows
+                if current_type != wanted_type or current_content != wanted_content
+            ]
+            conn.executemany(
+                "UPDATE messages SET msg_type = ?, content = ? WHERE msg_id = ?",
+                updates,
+            )
+            result[key] = {"updated": len(updates), "skipped": len(rows) - len(updates)}
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+    return result
 
 
 def delete_conversation_messages(conv_id):

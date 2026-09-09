@@ -4,6 +4,8 @@ The before_seq/after_seq branch behavior (incl. the before_seq=0 truthiness
 quirk and after_seq=0 'from the beginning' rule) and the whole-conversation
 `total` are observable behavior the frontend scroller depends on.
 """
+import json
+
 from tests.conftest import insert_conversation, insert_message
 
 
@@ -133,3 +135,45 @@ def test_daily_stats_groups_by_local_date(temp_db):
         {"date": "2025-07-28", "count": 2},
         {"date": "2025-07-29", "count": 1},
     ]
+def test_message_type_cleanup_is_previewable_idempotent_and_preserves_raw_data(temp_db):
+    import backend.database as database
+
+    conn = database.get_db()
+    insert_conversation(conn, "cleanup", "归一化")
+    payloads = {
+        "video": {"aweType": 0, "video": {"vid": "video-1"}, "duration": 6.4},
+        "forward": {"aweType": 13600, "title": "三人的聊天记录", "msg_ids": []},
+        "text": {"aweType": 0, "text": "普通消息"},
+    }
+    raw_values = {
+        key: json.dumps({"content_json": json.dumps(value, ensure_ascii=False)}, ensure_ascii=False)
+        for key, value in payloads.items()
+    }
+    insert_message(conn, "video", "cleanup", 1, content="旧视频", msg_type=1, raw_data=raw_values["video"])
+    insert_message(conn, "forward", "cleanup", 2, content="旧转发", msg_type=1, raw_data=raw_values["forward"])
+    insert_message(conn, "text", "cleanup", 3, content="普通消息", msg_type=1, raw_data=raw_values["text"])
+    conn.commit()
+    conn.close()
+
+    assert database.preview_message_type_cleanup() == {
+        "video_notes": {"total": 1, "need_update": 1, "already_clean": 0},
+        "merged_forwards": {"total": 1, "need_update": 1, "already_clean": 0},
+    }
+    assert database.cleanup_message_types() == {
+        "video_notes": {"updated": 1, "skipped": 0},
+        "merged_forwards": {"updated": 1, "skipped": 0},
+    }
+
+    conn = database.get_db()
+    rows = {row["msg_id"]: dict(row) for row in conn.execute("SELECT * FROM messages")}
+    conn.close()
+    assert (rows["video"]["msg_type"], rows["video"]["content"]) == (5, "[视频 6秒]")
+    assert (rows["forward"]["msg_type"], rows["forward"]["content"]) == (6, "三人的聊天记录")
+    assert (rows["text"]["msg_type"], rows["text"]["content"]) == (1, "普通消息")
+    assert rows["video"]["raw_data"] == raw_values["video"]
+    assert rows["forward"]["raw_data"] == raw_values["forward"]
+
+    assert database.cleanup_message_types() == {
+        "video_notes": {"updated": 0, "skipped": 1},
+        "merged_forwards": {"updated": 0, "skipped": 1},
+    }

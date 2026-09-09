@@ -501,6 +501,15 @@ select:focus, input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px v
     <div class="log-box" id="voiceBackfillLog"></div>
   </div>
   <div class="section">
+    <h2 data-i18n="messageTypeCleanupTitle">历史消息修复</h2>
+    <div class="meta" style="margin-bottom:10px" data-i18n="messageTypeCleanupDesc">修正历史视频笔记和合并转发的消息类型与显示文字，不重新采集聊天记录，也不改动原始数据。建议先预览。</div>
+    <div class="row">
+      <button class="btn btn-outline" id="messageTypePreviewBtn" onclick="previewMessageTypeCleanup()" data-i18n="messageTypePreviewBtn">预览待修正数据</button>
+      <button class="btn btn-primary" id="messageTypeCleanupBtn" onclick="runMessageTypeCleanup()" data-i18n="messageTypeCleanupBtn">执行修复</button>
+    </div>
+    <div class="meta" id="messageTypeCleanupMsg" style="margin-top:6px"></div>
+  </div>
+  <div class="section">
     <h2 data-i18n="mediaTitle">媒体下载</h2>
     <div class="meta" style="margin-bottom:10px" data-i18n="mediaDesc">采集时将图片/表情包下载到本地，避免抖音 CDN 链接过期后无法显示。</div>
     <label class="conv-check" style="margin-bottom:10px;cursor:pointer;">
@@ -737,6 +746,15 @@ const T = {
     databaseImportRunning: '正在导入数据库，请稍候...',
     databaseImportSuccess: '数据库导入完成，请刷新会话列表。',
     confirmDatabaseImport: '导入会覆盖当前数据库，导入前会自动保留旧数据库备份。确定继续吗？',
+    messageTypeCleanupTitle: '历史消息修复',
+    messageTypeCleanupDesc: '修正历史视频笔记和合并转发的消息类型与显示文字，不重新采集聊天记录，也不改动原始数据。建议先预览。',
+    messageTypePreviewBtn: '预览待修正数据',
+    messageTypeCleanupBtn: '执行修复',
+    messageTypeCleanupPreview: (v, f) => `待修正：视频笔记 ${v} 条，合并转发 ${f} 条`,
+    messageTypeCleanupNothing: '没有需要修正的数据。',
+    messageTypeCleanupConfirm: (v, f) => `将修正视频笔记 ${v} 条、合并转发 ${f} 条。原始数据不会改动，确定继续吗？`,
+    messageTypeCleanupRunning: '正在归一化消息类型...',
+    messageTypeCleanupDone: (v, f) => `完成：视频笔记 ${v} 条，合并转发 ${f} 条`,
     passwordTitle: '密码',
     passwordDesc: '设置密码以保护聊天查看器和控制面板。',
     enterPassword: '输入密码',
@@ -851,6 +869,15 @@ const T = {
     databaseImportRunning: 'Importing database, please wait...',
     databaseImportSuccess: 'Database imported. Refresh the conversation list.',
     confirmDatabaseImport: 'Import will replace the current database and keep an automatic backup first. Continue?',
+    messageTypeCleanupTitle: 'Repair historical messages',
+    messageTypeCleanupDesc: 'Correct the type and display text of historical video notes and merged forwards without fetching chat history again or changing raw data. Preview first.',
+    messageTypePreviewBtn: 'Preview corrections',
+    messageTypeCleanupBtn: 'Run repair',
+    messageTypeCleanupPreview: (v, f) => `To correct: ${v} video notes, ${f} merged forwards`,
+    messageTypeCleanupNothing: 'No messages need correction.',
+    messageTypeCleanupConfirm: (v, f) => `Correct ${v} video notes and ${f} merged forwards? Raw data will be preserved.`,
+    messageTypeCleanupRunning: 'Normalizing message types...',
+    messageTypeCleanupDone: (v, f) => `Done: ${v} video notes, ${f} merged forwards`,
     passwordTitle: 'Password',
     passwordDesc: 'Set a password to protect the chat viewer and panel.',
     enterPassword: 'Enter password',
@@ -1445,6 +1472,54 @@ async function importDatabase() {
     updateDatabaseFileName(input);
     await loadStatus();
     await loadDiscoveredConvs();
+  } catch (e) {
+    setDynText(msg, t('error') + ': ' + (e.message || e));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function fetchMessageTypeCleanupPreview() {
+  const r = await fetch('/panel/api/database/cleanup/message-types');
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(d.error || t('error'));
+  return d;
+}
+
+async function previewMessageTypeCleanup() {
+  const msg = document.getElementById('messageTypeCleanupMsg');
+  const btn = document.getElementById('messageTypePreviewBtn');
+  btn.disabled = true;
+  try {
+    const d = await fetchMessageTypeCleanupPreview();
+    const videos = d.video_notes.need_update || 0;
+    const forwards = d.merged_forwards.need_update || 0;
+    setDynText(msg, videos || forwards ? t('messageTypeCleanupPreview', videos, forwards) : t('messageTypeCleanupNothing'));
+  } catch (e) {
+    setDynText(msg, t('error') + ': ' + (e.message || e));
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function runMessageTypeCleanup() {
+  const msg = document.getElementById('messageTypeCleanupMsg');
+  const btn = document.getElementById('messageTypeCleanupBtn');
+  btn.disabled = true;
+  try {
+    const preview = await fetchMessageTypeCleanupPreview();
+    const videos = preview.video_notes.need_update || 0;
+    const forwards = preview.merged_forwards.need_update || 0;
+    if (!videos && !forwards) {
+      setDynText(msg, t('messageTypeCleanupNothing'));
+      return;
+    }
+    if (!confirm(t('messageTypeCleanupConfirm', videos, forwards))) return;
+    setDynText(msg, t('messageTypeCleanupRunning'));
+    const r = await fetch('/panel/api/database/cleanup/message-types', {method: 'POST'});
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(d.error || t('error'));
+    setDynText(msg, t('messageTypeCleanupDone', d.video_notes.updated || 0, d.merged_forwards.updated || 0));
   } catch (e) {
     setDynText(msg, t('error') + ': ' + (e.message || e));
   } finally {
